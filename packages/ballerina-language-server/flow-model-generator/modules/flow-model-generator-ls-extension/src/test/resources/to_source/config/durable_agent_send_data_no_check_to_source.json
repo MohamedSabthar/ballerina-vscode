@@ -1,6 +1,6 @@
 {
   "source": "durable_agent_module.bal",
-  "description": "Send Agent Data Event without check binds the token as string|error",
+  "description": "Send Agent Data Event without check on a one-way channel still discards the token through check: `_` cannot take the error",
   "diagram": {
     "id": "1",
     "metadata": {
@@ -108,7 +108,7 @@
             "character": 0
           }
         },
-        "newText": "\n_ = supportAgent.sendData(instanceId, \"billSubmitted\", {amount: 10});"
+        "newText": "\n_ = check supportAgent.sendData(instanceId, \"billSubmitted\", {amount: 10});"
       }
     ]
   }

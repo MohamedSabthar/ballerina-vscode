@@ -59,8 +59,9 @@ async function saveForm(panel: Locator): Promise<void> {
     const enabled = await expect.poll(() => saveButton.getAttribute('disabled'), { timeout: 30000 }).toBeNull()
         .then(() => true, () => false);
     if (!enabled) {
-        const problems = await panel.locator('[class*=error], [class*=diagnostic]').allInnerTexts().catch(() => []);
-        throw new Error(`Save stayed disabled${problems.length ? `: ${problems.join(' | ').slice(0, 400)}` : ''}`);
+        // The panel's text carries the field messages; class names are hashed per build, so no selector.
+        const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
+        throw new Error(`Save stayed disabled; the panel shows: ${shown}`);
     }
     await page.page.waitForTimeout(500);
     await saveButton.click({ force: true });

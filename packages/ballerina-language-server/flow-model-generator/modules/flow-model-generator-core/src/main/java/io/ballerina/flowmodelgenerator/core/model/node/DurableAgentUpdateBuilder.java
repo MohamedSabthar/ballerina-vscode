@@ -185,11 +185,13 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
         // sendData answers `string|error` on every channel: that value is the turn's correlation
         // token, never the channel's declared `response`. On a channel that declares one, the token
         // is what Get Agent Data Result reads the response with; on a one-way channel there is
-        // nothing to read, the compiler plugin rejects binding the token, and it is discarded.
+        // nothing to read, the compiler plugin rejects binding the token, and it is discarded —
+        // always through `check`, since `_` cannot take the error member.
         boolean oneWay = !WorkflowUtil.agentEventDeclaresResponse(sourceBuilder.workspaceManager,
                 sourceBuilder.filePath, agent, WorkflowUtil.capabilityName(eventName));
         if (oneWay) {
-            sourceBuilder.token().name("_").whiteSpace().keyword(SyntaxKind.EQUAL_TOKEN);
+            sourceBuilder.token().name("_").whiteSpace().keyword(SyntaxKind.EQUAL_TOKEN)
+                    .keyword(SyntaxKind.CHECK_KEYWORD);
         } else {
             sourceBuilder.token()
                     .name(checkError ? STRING_TYPE : STRING_TYPE + "|error")
@@ -197,9 +199,9 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
                     .name(variableName)
                     .whiteSpace()
                     .keyword(SyntaxKind.EQUAL_TOKEN);
-        }
-        if (checkError) {
-            sourceBuilder.token().keyword(SyntaxKind.CHECK_KEYWORD);
+            if (checkError) {
+                sourceBuilder.token().keyword(SyntaxKind.CHECK_KEYWORD);
+            }
         }
         sourceBuilder.token()
                 .name(expression)
