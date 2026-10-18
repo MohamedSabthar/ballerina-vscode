@@ -26,10 +26,10 @@ import io.ballerina.flowmodelgenerator.core.model.Option;
 import io.ballerina.flowmodelgenerator.core.model.Property;
 import io.ballerina.flowmodelgenerator.core.model.SourceBuilder;
 import io.ballerina.flowmodelgenerator.core.utils.FlowNodeUtil;
-import org.ballerinalang.langserver.common.utils.NameUtil;
 import io.ballerina.flowmodelgenerator.core.utils.WorkflowUtil;
 import io.ballerina.modelgenerator.commons.FileSystemUtils;
 import io.ballerina.modelgenerator.commons.ParameterData;
+import org.ballerinalang.langserver.common.utils.NameUtil;
 import org.eclipse.lsp4j.TextEdit;
 
 import java.nio.file.Path;
@@ -186,9 +186,10 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
         // token, never the channel's declared `response`. On a channel that declares one, the token
         // is what Get Agent Data Result reads the response with; on a one-way channel there is
         // nothing to read, the compiler plugin rejects binding the token, and it is discarded —
-        // always through `check`, since `_` cannot take the error member.
-        boolean oneWay = !WorkflowUtil.agentEventDeclaresResponse(sourceBuilder.workspaceManager,
-                sourceBuilder.filePath, agent, WorkflowUtil.capabilityName(eventName));
+        // always through `check`, since `_` cannot take the error member. A declaration that cannot
+        // be read keeps the binding: the compiler says which one it is, a silent discard would not.
+        boolean oneWay = WorkflowUtil.agentEventDeclaresResponse(sourceBuilder.workspaceManager,
+                sourceBuilder.filePath, agent, WorkflowUtil.capabilityName(eventName)) == Boolean.FALSE;
         if (oneWay) {
             sourceBuilder.token().name("_").whiteSpace().keyword(SyntaxKind.EQUAL_TOKEN)
                     .keyword(SyntaxKind.CHECK_KEYWORD);

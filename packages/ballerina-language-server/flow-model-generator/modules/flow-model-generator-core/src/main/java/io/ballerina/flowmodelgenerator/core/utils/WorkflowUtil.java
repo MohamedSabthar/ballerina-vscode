@@ -868,10 +868,11 @@ public class WorkflowUtil {
      * @param filePath         the file the statement is generated into
      * @param targetAgent      the agent's module-level variable name
      * @param eventName        the channel's name, as the declaration means it
-     * @return {@code true} when a matching declaration names the channel with a {@code response};
-     *         {@code false} when it is one-way, or when no declaration of it can be read
+     * @return {@code TRUE} when a matching declaration names the channel with a {@code response},
+     *         {@code FALSE} when it declares it one-way, {@code null} when no declaration of the
+     *         channel can be read
      */
-    public static boolean agentEventDeclaresResponse(
+    public static Boolean agentEventDeclaresResponse(
             org.ballerinalang.langserver.commons.workspace.WorkspaceManager workspaceManager, Path filePath,
             String targetAgent, String eventName) {
         Project project;
@@ -880,7 +881,7 @@ public class WorkflowUtil {
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Skipping the declared agent event lookup: failed to load the project of "
                     + filePath, e);
-            return false;
+            return null;
         }
         for (Module module : project.currentPackage().modules()) {
             for (DocumentId documentId : module.documentIds()) {
@@ -906,7 +907,7 @@ public class WorkflowUtil {
                 }
             }
         }
-        return false;
+        return null;
     }
 
     /**
