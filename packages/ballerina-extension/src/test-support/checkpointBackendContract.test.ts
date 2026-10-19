@@ -107,6 +107,19 @@ describe.each([
         expect([...resolved.keys()]).toEqual(['added.bal']);
     });
 
+    it('never resolves a binary file present at capture as absent', async () => {
+        const bytes = Buffer.from([0x89, 0x50, 0xff, 0xfe, 0x00, 0x80]);
+        fs.writeFileSync(path.join(root, 'logo.png'), bytes);
+        const cp = await capture(backend, root);
+
+        const entry = (await backend.resolve(cp, ['logo.png'])).get('logo.png');
+        if (kind === 'inline') {
+            expect(entry).toEqual({ state: 'unavailable', reason: 'unreadable' });
+        } else {
+            expect(entry?.state === 'content' && entry.bytes.equals(bytes)).toBe(true);
+        }
+    });
+
     it('references every stored entry', async () => {
         const cp = await capture(backend, root);
         const refs = [...backend.references(cp)];

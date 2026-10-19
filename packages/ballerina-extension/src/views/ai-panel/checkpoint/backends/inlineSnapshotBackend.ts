@@ -44,7 +44,6 @@ export class InlineSnapshotBackend implements CheckpointBackend {
                     skipped.push({ path: file.path, reason: 'unreadable' });
                     continue;
                 }
-                // A snapshot holds strings, so bytes that do not survive a UTF-8 round trip cannot be reproduced.
                 if (!isLosslessUtf8(bytes)) {
                     continue;
                 }
@@ -66,11 +65,14 @@ export class InlineSnapshotBackend implements CheckpointBackend {
 
     async resolve(cp: Checkpoint, paths: string[]): Promise<Map<string, ResolvedContent>> {
         const snapshot = cp.workspaceSnapshot ?? {};
+        const listed = new Set(cp.fileList);
         const resolved = new Map<string, ResolvedContent>();
         for (const p of paths) {
-            resolved.set(p, Object.prototype.hasOwnProperty.call(snapshot, p)
-                ? { state: 'content', bytes: Buffer.from(snapshot[p], 'utf8') }
-                : { state: 'absent' });
+            if (Object.prototype.hasOwnProperty.call(snapshot, p)) {
+                resolved.set(p, { state: 'content', bytes: Buffer.from(snapshot[p], 'utf8') });
+            } else {
+                resolved.set(p, listed.has(p) ? { state: 'unavailable', reason: 'unreadable' } : { state: 'absent' });
+            }
         }
         return resolved;
     }

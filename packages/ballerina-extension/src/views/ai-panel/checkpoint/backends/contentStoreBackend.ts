@@ -43,6 +43,15 @@ const GC_MIN_AGE_MS = 60 * 60 * 1000;
 const isHashEntry = (entry: CheckpointFileEntry | undefined): entry is HashEntry =>
     !!entry && 'hash' in entry;
 
+// Identical files read in the same chunk can each see created: true for one blob.
+function countOnce(stored: Stored, counted: Set<string>): number {
+    if (!isHashEntry(stored.entry) || stored.createdBytes === 0 || counted.has(stored.entry.hash)) {
+        return 0;
+    }
+    counted.add(stored.entry.hash);
+    return stored.createdBytes;
+}
+
 const sha256 = (bytes: Buffer) => crypto.createHash('sha256').update(bytes).digest('hex');
 
 export class ContentStoreBackend implements CheckpointBackend {
@@ -53,6 +62,7 @@ export class ContentStoreBackend implements CheckpointBackend {
     async capture(ctx: CaptureContext): Promise<CaptureResult> {
         const limits = resolveCaptureLimits(ctx.limits);
         const files: Record<string, CheckpointFileEntry> = {};
+        const counted = new Set<string>();
         let newBytes = 0;
         const overLimit = () => {
             if (newBytes > limits.maxNewBytes) {
@@ -64,12 +74,12 @@ export class ContentStoreBackend implements CheckpointBackend {
             const stored = await Promise.all(chunk.map(file => this.captureFile(file, ctx, limits)));
             chunk.forEach((file, i) => {
                 files[file.path] = stored[i].entry;
-                newBytes += stored[i].createdBytes;
+                newBytes += countOnce(stored[i], counted);
             });
             overLimit();
         }
 
-        newBytes += await this.restoreMissingBlobs(ctx.files, files, limits);
+        newBytes += await this.restoreMissingBlobs(ctx.files, files, limits, counted);
         overLimit();
 
         const skipped: CaptureResult['skipped'] = [];
@@ -101,9 +111,13 @@ export class ContentStoreBackend implements CheckpointBackend {
 
     async resolve(cp: Checkpoint, paths: string[]): Promise<Map<string, ResolvedContent>> {
         const files = this.filesOf(cp);
+        const listed = new Set(cp.fileList);
         const resolved = new Map<string, ResolvedContent>();
         for (const chunk of inChunks(paths)) {
-            const contents = await Promise.all(chunk.map(p => this.resolveEntry(p, files[p])));
+            const contents = await Promise.all(chunk.map(p => {
+                const entry = Object.prototype.hasOwnProperty.call(files, p) ? files[p] : undefined;
+                return this.resolveEntry(p, entry, listed.has(p));
+            }));
             chunk.forEach((p, i) => resolved.set(p, contents[i]));
         }
         return resolved;
@@ -162,7 +176,7 @@ export class ContentStoreBackend implements CheckpointBackend {
 
     // A sweep running alongside this capture can remove a blob after it was reused or written.
     private async restoreMissingBlobs(
-        scanned: ScannedFile[], files: Record<string, CheckpointFileEntry>, limits: Limits
+        scanned: ScannedFile[], files: Record<string, CheckpointFileEntry>, limits: Limits, counted: Set<string>
     ): Promise<number> {
         const pathsByHash = new Map<string, string[]>();
         for (const [p, entry] of Object.entries(files)) {
@@ -179,7 +193,7 @@ export class ContentStoreBackend implements CheckpointBackend {
             for (const p of paths) {
                 const stored = await this.storeFile(await this.restat(byPath.get(p)), limits);
                 files[p] = stored.entry;
-                createdBytes += stored.createdBytes;
+                createdBytes += countOnce(stored, counted);
             }
         }
         return createdBytes;
@@ -194,9 +208,9 @@ export class ContentStoreBackend implements CheckpointBackend {
         }
     }
 
-    private async resolveEntry(p: string, entry: CheckpointFileEntry | undefined): Promise<ResolvedContent> {
+    private async resolveEntry(p: string, entry: CheckpointFileEntry | undefined, listed: boolean): Promise<ResolvedContent> {
         if (!entry) {
-            return { state: 'absent' };
+            return listed ? { state: 'unavailable', reason: 'unreadable' } : { state: 'absent' };
         }
         if (!isHashEntry(entry)) {
             return { state: 'unavailable', reason: entry.skipped };

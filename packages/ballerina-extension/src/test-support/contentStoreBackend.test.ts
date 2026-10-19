@@ -146,6 +146,55 @@ describe('ContentStoreBackend', () => {
         expect(result.newBytes).toBe(0);
     });
 
+    it('re-reads a file whose size changed since the previous capture', async () => {
+        write('main.bal', '// main\n');
+        const { cp: previous } = await captureCp();
+        write('main.bal', '// main, but longer\n');
+        reads = [];
+
+        const { cp } = await captureCp({ previous });
+
+        expect(reads).toEqual(['main.bal']);
+        expect(hashOf(cp, 'main.bal')).not.toBe(hashOf(previous, 'main.bal'));
+        expect((await backend.resolve(cp, ['main.bal'])).get('main.bal')).toEqual({
+            state: 'content', bytes: Buffer.from('// main, but longer\n'),
+        });
+    });
+
+    it('re-reads a same-size file whose mtime changed since the previous capture', async () => {
+        write('main.bal', '// aaaa\n');
+        const { cp: previous } = await captureCp();
+        write('main.bal', '// bbbb\n', OLD + 10_000);
+        reads = [];
+
+        const { cp } = await captureCp({ previous });
+
+        expect(reads).toEqual(['main.bal']);
+        expect(hashOf(cp, 'main.bal')).not.toBe(hashOf(previous, 'main.bal'));
+    });
+
+    it('counts a blob shared by identical files once', async () => {
+        write('a.bal', '// same\n');
+        write('b.bal', '// same\n');
+
+        const { result, cp } = await captureCp();
+
+        expect(hashOf(cp, 'a.bal')).toBe(hashOf(cp, 'b.bal'));
+        expect(result.newBytes).toBe('// same\n'.length);
+    });
+
+    it('resolves a skipped file as unavailable and only an unlisted path as absent', async () => {
+        write('big.bin', Buffer.alloc(LIMITS.maxFileSize + 1, 1));
+        const { cp } = await captureCp();
+        cp.fileList.push('listed-without-entry.txt');
+
+        const resolved = await backend.resolve(cp, ['big.bin', 'listed-without-entry.txt', 'added.bal']);
+
+        expect(resolved.get('big.bin')).toEqual({ state: 'unavailable', reason: 'tooLarge' });
+        expect(resolved.get('listed-without-entry.txt')).toEqual({ state: 'unavailable', reason: 'unreadable' });
+        expect(resolved.get('added.bal')).toEqual({ state: 'absent' });
+    });
+
     it('re-reads a file whose mtime is within 2 s of the previous capture', async () => {
         write('main.bal', '// main\n');
         const { cp: previous } = await captureCp({}, OLD + 1500);
