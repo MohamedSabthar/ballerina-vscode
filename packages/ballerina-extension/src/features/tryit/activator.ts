@@ -36,6 +36,7 @@ import { requiresPackageSelection, selectIntegrationOrPrompt } from "../../utils
 import { VisualizerWebview } from "../../views/visualizer/webview";
 import { TracerMachine } from "../tracing";
 import { resolveServiceType, ServiceType } from "./service-type";
+import { readExistingConfigValues } from "../../utils/toml-utils";
 
 // File constants
 const FILE_NAMES = {
@@ -529,6 +530,12 @@ async function getOpenAPIDefinition(service: ServiceInfo): Promise<OAISpec> {
     }
 }
 
+function getDefaultListenerPort(projectDir: string): number {
+    const { defaultListenerPort } = readExistingConfigValues(
+        path.join(projectDir, 'Config.toml'), ['defaultListenerPort'], 'ballerina', 'http');
+    return parseInt(defaultListenerPort) || 9090;
+}
+
 async function getServicePort(projectDir: string, service: ServiceInfo, openapiSpec?: OAISpec): Promise<number> {
     try {
         // If the service has an anonymous listener, directly use the port defined inline
@@ -536,9 +543,8 @@ async function getServicePort(projectDir: string, service: ServiceInfo, openapiS
             return parseInt(service.listener.port);
         }
 
-        // If the listener uses http:getDefaultListener(), resolve to the default port (9090)
         if (service.listener.port?.includes('getDefaultListener')) {
-            return 9090;
+            return getDefaultListenerPort(projectDir);
         }
 
         // Try to get default port from OpenAPI spec first
