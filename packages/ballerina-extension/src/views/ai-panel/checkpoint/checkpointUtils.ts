@@ -236,7 +236,7 @@ export async function restoreWorkspaceSnapshot(checkpoint: Checkpoint, skipArtif
 
             const balFilesToRestore: Array<{ fileUri: vscode.Uri; content: string }> = [];
             const nonBalFilesToRestore: Array<{ fileUri: vscode.Uri; content: string }> = [];
-            for (const [filePath, content] of Object.entries(checkpoint.workspaceSnapshot)) {
+            for (const [filePath, content] of Object.entries(checkpoint.workspaceSnapshot ?? {})) {
                 const fileUri = resolveInsideWorkspace(workspaceRoot, filePath);
                 if (!fileUri) {
                     console.warn(`[Checkpoint] Refusing to write outside the workspace: ${filePath}`);

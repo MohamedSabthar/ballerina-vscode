@@ -258,6 +258,7 @@ function toPersistedCheckpoint(checkpoint: Checkpoint): Omit<PersistedCheckpoint
         timestamp: checkpoint.timestamp,
         fileList: checkpoint.fileList,
         snapshotSize: checkpoint.snapshotSize,
+        storage: checkpoint.storage ?? { kind: 'inline' },
         workspaceSnapshot: checkpoint.workspaceSnapshot,
         workspaceRoot: checkpoint.workspaceRoot,
         ignorePatterns: checkpoint.ignorePatterns,
@@ -272,6 +273,8 @@ function fromPersistedCheckpoint(pc: PersistedCheckpoint): Checkpoint {
         fileList: pc.fileList,
         snapshotSize: pc.snapshotSize,
         workspaceSnapshot: pc.workspaceSnapshot,
+        storage: pc.storage,
+        schemaVersion: pc.schemaVersion,
         workspaceRoot: (pc as { workspaceRoot?: string }).workspaceRoot,
         ignorePatterns: (pc as { ignorePatterns?: string[] }).ignorePatterns,
     };
