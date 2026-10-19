@@ -126,30 +126,38 @@ export default function createTests() {
                 .toMatch(/events:\s*\{\s*bill:\s*\{[^}]*\}\s*,\s*chat:\s*\{request:\s*string,\s*response:\s*string\}\s*\}/);
         });
 
-        test('Register human tasks as the keyed map', async () => {
+        // Two tests, so a refused save says which input the form could not take: a role given as an
+        // expression, or a completion type typed into the type field.
+        test('Register a human task for a role given as an expression', async () => {
             const webview = await getWebview();
             await webview.getByTestId('durable-agent-run-node').waitFor({ state: 'visible', timeout: 60000 });
 
-            logStep('Register managerApproval for the MANAGER role with a completion type');
+            logStep('Register managerApproval for the MANAGER role');
             await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
             const panel = webview.getByTestId('side-panel');
             await fillTextField(panel, 'Task Name', 'managerApproval');
             await switchToExpression(panel, 'userRoles');
             await fillExpression(webview, 'userRoles', '"MANAGER"');
+            await saveForm(panel);
+            await expect.poll(mainSource, { timeout: 90000 })
+                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{userRoles:\s*"MANAGER"\}\s*\}/);
+            expect(mainSource()).not.toMatch(/humanTasks:\s*\[/);
+        });
+
+        test('Register a human task with a completion type: the map gains a key', async () => {
+            const webview = await getWebview();
+            await webview.getByTestId('durable-agent-run-node').waitFor({ state: 'visible', timeout: 60000 });
+
+            logStep('Register financeApproval for a named user with a completion type');
+            await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
+            const panel = webview.getByTestId('side-panel');
+            await fillTextField(panel, 'Task Name', 'financeApproval');
+            await switchToExpression(panel, 'users');
+            await fillExpression(webview, 'users', '"alice"');
             await fillUnderLabel(panel, 'Completion Type', 'BillDetails');
             await saveForm(panel);
             await expect.poll(mainSource, { timeout: 90000 })
-                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{userRoles:\s*"MANAGER",\s*resultType:\s*BillDetails\}\s*\}/);
-            expect(mainSource()).not.toMatch(/humanTasks:\s*\[/);
-
-            logStep('Register a second task: the form can still add to the map');
-            await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
-            await fillTextField(panel, 'Task Name', 'financeApproval');
-            await switchToExpression(panel, 'userRoles');
-            await fillExpression(webview, 'userRoles', '"FINANCE"');
-            await saveForm(panel);
-            await expect.poll(mainSource, { timeout: 90000 })
-                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\}\s*,\s*financeApproval:\s*\{userRoles:\s*"FINANCE"\}\s*\}/);
+                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\}\s*,\s*financeApproval:\s*\{userRoles:\s*\(\),\s*users:\s*"alice",\s*resultType:\s*BillDetails\}\s*\}/);
         });
 
         test('Send Agent Data Event discards the token on a one-way channel', async () => {
