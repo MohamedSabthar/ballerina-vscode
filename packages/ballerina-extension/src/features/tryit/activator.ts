@@ -54,6 +54,13 @@ export function updateChatSessionId(endpoint: string, newSessionId: string): voi
     chatSessionMap.set(endpoint, newSessionId);
 }
 
+// User-edited chat endpoints, keyed by the detected endpoint they replace
+const chatEndpointOverrides: Map<string, string> = new Map();
+
+export function overrideChatEndpoint(detectedEndpoint: string, chatEndpoint: string): void {
+    chatEndpointOverrides.set(detectedEndpoint, chatEndpoint);
+}
+
 export function activateTryItCommand(ballerinaExtInstance: BallerinaExtension) {
     try {
         clientManager.setClient(ballerinaExtInstance.langClient);
@@ -311,7 +318,8 @@ async function openChatView(
     try {
         // Build agent info for all agent services
         const agents = allAgentServices.map(({ service, port }) => {
-            const chatEndpoint = buildChatEndpoint(service.basePath, port);
+            const detectedChatEp = buildChatEndpoint(service.basePath, port);
+            const chatEndpoint = chatEndpointOverrides.get(detectedChatEp) ?? detectedChatEp;
             let sessionId: string;
 
             if (!wasServiceAlreadyRunning) {
@@ -326,6 +334,7 @@ async function openChatView(
                 name: getAgentDisplayName(service.basePath),
                 basePath: service.basePath,
                 chatEp: chatEndpoint,
+                detectedChatEp,
                 chatSessionId: sessionId,
             };
         });
