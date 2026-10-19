@@ -91,6 +91,7 @@ export default function createTests() {
             await selectDropdown(panel, /Cardinality/, 'SINGLE_EVENT');
             await saveForm(panel);
             // The map form the module declares, keyed by the name — not a list of {name: ...} records.
+            // A second entry is appended after a newline and a comma on its own line, hence `\}\s*,`.
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/events:\s*\{\s*bill:\s*\{request:\s*json,\s*cardinality:\s*workflow:SINGLE_EVENT\}\s*\}/);
             expect(mainSource()).not.toMatch(/events:\s*\[/);
@@ -102,7 +103,7 @@ export default function createTests() {
             await fillUnderLabel(panel, 'Response Type', 'string');
             await saveForm(panel);
             await expect.poll(mainSource, { timeout: 90000 })
-                .toMatch(/events:\s*\{\s*bill:\s*\{[^}]*\},\s*chat:\s*\{request:\s*string,\s*response:\s*string\}\s*\}/);
+                .toMatch(/events:\s*\{\s*bill:\s*\{[^}]*\}\s*,\s*chat:\s*\{request:\s*string,\s*response:\s*string\}\s*\}/);
         });
 
         test('Register human tasks as the keyed map', async () => {
@@ -128,7 +129,7 @@ export default function createTests() {
             await fillExEditor(webview, 'userRoles', '"FINANCE"');
             await saveForm(panel);
             await expect.poll(mainSource, { timeout: 90000 })
-                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\},\s*financeApproval:\s*\{userRoles:\s*"FINANCE"\}\s*\}/);
+                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\}\s*,\s*financeApproval:\s*\{userRoles:\s*"FINANCE"\}\s*\}/);
         });
 
         test('Send Agent Data Event discards the token on a one-way channel', async () => {
