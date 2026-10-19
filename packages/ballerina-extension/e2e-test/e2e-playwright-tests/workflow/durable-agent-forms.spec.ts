@@ -69,7 +69,11 @@ async function saveForm(panel: Locator): Promise<void> {
     await saveButton.waitFor({ state: 'hidden', timeout: 90000 }).catch(async (error) => {
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ');
         const tail = shown.length > 1200 ? ` … ${shown.slice(-600)}` : '';
-        throw new Error(`Save did not close the form; the panel shows: ${shown.slice(0, 1200)}${tail}`, { cause: error });
+        // A refused save is reported outside the webview, as a VS Code notification.
+        const toasts = (await page.page.locator('.notification-toast, .notifications-list-container').allInnerTexts()
+            .catch(() => [] as string[])).join(' | ').replace(/\s+/g, ' ').slice(0, 600);
+        throw new Error(`Save did not close the form; the panel shows: ${shown.slice(0, 1200)}${tail}`
+            + (toasts ? `; VS Code notifications: ${toasts}` : '; no VS Code notification shown'), { cause: error });
     });
 }
 
