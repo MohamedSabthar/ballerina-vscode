@@ -23,7 +23,7 @@ import { initTest, newProjectPath, page } from '../utils/helpers';
 import { DEFAULT_PROJECT_NAME } from '../utils/helpers/constants';
 import { ProjectExplorer } from '../utils/pages';
 import { logStep } from '../utils/helpers/progress';
-import { fillUnderLabel, openPaletteBelow, paletteItem, workflowPaletteItem } from './palette';
+import { dismissTypeHelper, fillUnderLabel, openPaletteBelow, paletteItem, workflowPaletteItem } from './palette';
 import { fillExEditor, fillTextField, getWebview, selectDropdown, switchToExpression } from './roleFields';
 
 // The durable agent's forms write what ballerina/workflow 1.0 declares: `events` and `humanTasks` are maps
@@ -64,6 +64,7 @@ async function saveForm(panel: Locator): Promise<void> {
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
         throw new Error(`Save stayed disabled; the panel shows: ${shown}`);
     }
+    await dismissTypeHelper(panel);
     await saveButton.click({ force: true });
     // A save the LS or the form refuses leaves the panel open; its text says why, the timeout alone does not.
     await saveButton.waitFor({ state: 'hidden', timeout: 90000 }).catch(async (error) => {

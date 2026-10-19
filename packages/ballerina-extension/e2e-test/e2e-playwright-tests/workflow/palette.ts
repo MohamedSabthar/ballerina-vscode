@@ -69,8 +69,26 @@ export async function fillUnderLabel(scope: Locator, label: string, value: strin
         await expect.poll(() => input.inputValue(), { timeout: 10000 }).toBe(value);
     }
     await page.page.waitForTimeout(400);
-    // The type helper popup stays open over the fields below it; the next click would land in it.
-    await page.page.keyboard.press('Escape');
+    await dismissTypeHelper(scope);
+}
+
+// The type helper popup stays open over the fields below it, and over Save when the field is the last one:
+// a click there lands in the popup, even a forced one. Escape closes it from the field; when it does not,
+// clicking the panel's own title takes the focus away, and the popup has to be gone before going on.
+export async function dismissTypeHelper(scope: Locator): Promise<void> {
+    const popup = scope.getByText('to cancel', { exact: false }).first();
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (!await popup.isVisible().catch(() => false)) {
+            return;
+        }
+        if (attempt === 0) {
+            await page.page.keyboard.press('Escape');
+        } else {
+            await scope.locator('h1, h2, h3, h4').filter({ visible: true }).first().click({ timeout: 5000 }).catch(() => undefined);
+        }
+        await page.page.waitForTimeout(300);
+    }
+    await popup.waitFor({ state: 'hidden', timeout: 5000 });
 }
 
 export const sidePanelOpens = (webview: Frame, timeout: number) =>
