@@ -953,13 +953,19 @@ export const Form = forwardRef((props: FormProps, _ref) => {
     // re-checked); react-hook-form otherwise keeps that field's last value and any validation error,
     // which leaves the form invalid (Save/Next disabled) even though the field is gone. Unregister the
     // removed keys and revalidate so validity reflects only the fields currently on screen.
+    // Only fields that already show an error are re-checked: validating the whole form here marks every
+    // field not yet filled in as required, and before the first submit typing does not clear that error
+    // (the Generate form's Expected Type stayed "required" with a type in it, wso2/product-integrator#2810).
     const prevFieldKeysRef = useRef<string[]>([]);
     useEffect(() => {
         const currentKeys = new Set(formFields.map((field) => field.key));
         const removedKeys = prevFieldKeysRef.current.filter((key) => !currentKeys.has(key));
         if (removedKeys.length > 0) {
             unregister(removedKeys);
-            trigger();
+            const erroredKeys = Object.keys(errors).filter((key) => currentKeys.has(key));
+            if (erroredKeys.length > 0) {
+                trigger(erroredKeys);
+            }
         }
         prevFieldKeysRef.current = Array.from(currentKeys);
     }, [formFields, unregister, trigger]);
