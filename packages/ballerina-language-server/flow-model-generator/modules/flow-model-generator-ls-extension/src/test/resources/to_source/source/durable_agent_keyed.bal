@@ -28,3 +28,11 @@ final workflow:DurableAgent refAgent = check new ({
     model: keyedModel,
     events: {notice: noticeConfig}
 });
+
+# A project on a keyed release whose agent still carries empty lists: the first entry rewrites them as maps.
+final workflow:DurableAgent emptyAgent = check new ({
+    systemPrompt: {role: "Inbox", instructions: "Route mail."},
+    model: keyedModel,
+    events: [],
+    humanTasks: []
+});

@@ -76,6 +76,7 @@ import io.ballerina.projects.PackageManifest;
 import io.ballerina.projects.PackageName;
 import io.ballerina.projects.PackageOrg;
 import io.ballerina.projects.Project;
+import io.ballerina.projects.SemanticVersion;
 import io.ballerina.tools.text.LinePosition;
 import io.ballerina.tools.text.LineRange;
 import io.ballerina.tools.text.TextRange;
@@ -424,11 +425,13 @@ public class WorkflowUtil {
         if (declaration == null) {
             throw new UserFacingException("Cannot locate the durable agent declaration: " + agentVarName);
         }
-        return insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entryText);
+        return insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entryText, false);
     }
 
+    // `keyed` says whether a field that is not there yet is created as a mapping or a list.
     private static Map<Path, List<org.eclipse.lsp4j.TextEdit>> insertAgentCapabilityEntry(
-            SourceBuilder sourceBuilder, AgentDeclaration declaration, String fieldName, String entryText) {
+            SourceBuilder sourceBuilder, AgentDeclaration declaration, String fieldName, String entryText,
+            boolean keyedField) {
         MappingConstructorExpressionNode config = declaration.config();
 
         LinePosition insertAt = null;
@@ -476,10 +479,8 @@ public class WorkflowUtil {
             break;
         }
         if (insertAt == null) {
-            // A new field follows the last config field, as any other appended field does: a keyed
-            // mapping for the fields the module declares as maps, a list for the others.
-            String literal = KEYED_CAPABILITY_FIELDS.contains(fieldName)
-                    ? "{" + entryText + "}" : "[" + entryText + "]";
+            // A new field follows the last config field, as any other appended field does.
+            String literal = keyedField ? "{" + entryText + "}" : "[" + entryText + "]";
             Map<Path, List<org.eclipse.lsp4j.TextEdit>> edits = new HashMap<>();
             edits.put(declaration.filePath(),
                     List.of(appendConfigFields(config, Map.of(fieldName, literal))));
@@ -1019,15 +1020,40 @@ public class WorkflowUtil {
                 : replaceAgentCapabilityEntry(sourceBuilder, agentVarName, entryText);
     }
 
-    // The config fields ballerina/workflow 1.0 declares as maps keyed by the capability's name.
+    // The config fields ballerina/workflow declares as maps keyed by the capability's name.
     private static final Set<String> KEYED_CAPABILITY_FIELDS = Set.of("events", "humanTasks");
+
+    // The release that turned `events` and `humanTasks` from lists of named records into those maps.
+    private static final SemanticVersion KEYED_CAPABILITIES_SINCE = SemanticVersion.from("0.9.0");
+
+    /**
+     * Whether the project's ballerina/workflow declares {@code events} and {@code humanTasks} as
+     * mappings keyed by name (0.9.0 and later) rather than as the lists of named records the
+     * earlier releases took. A project that pins no version, or one that cannot be read, is taken
+     * to be on the module the designer ships with, which is keyed.
+     *
+     * @param sourceBuilder the source builder carrying the workspace and the file
+     * @return {@code true} for the keyed mapping form
+     */
+    static boolean keyedCapabilityForm(SourceBuilder sourceBuilder) {
+        String version = workflowModuleVersion(sourceBuilder.workspaceManager, sourceBuilder.filePath, null);
+        if (version == null) {
+            return true;
+        }
+        try {
+            return SemanticVersion.from(version).greaterThanOrEqualTo(KEYED_CAPABILITIES_SINCE);
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
 
     /**
      * Inserts or replaces a named capability entry ({@code events}, {@code humanTasks}) of a durable
-     * agent declaration, spelled the way that declaration writes the field: {@code name: {fields}}
-     * in the keyed mapping form the module declares (and the form a new field is created in), or
-     * {@code {name: "...", fields}} when the declaration still carries the list form the module
-     * accepted before 0.9 (wso2/product-integrator#2809).
+     * agent declaration in the form the project's ballerina/workflow version declares the field:
+     * {@code name: {fields}} in the keyed mapping of 0.9.0 and later, {@code {name: "...", fields}}
+     * in the list the earlier releases took (wso2/product-integrator#2809). A list left behind in a
+     * project that has moved to a keyed release no longer compiles, so the write rewrites the whole
+     * field as a mapping, carrying its entries over, instead of appending to it.
      *
      * @param sourceBuilder the source builder whose flow node names the agent and the entry
      * @param fieldName     the config field
@@ -1048,7 +1074,9 @@ public class WorkflowUtil {
                         && specific.valueExpr().isPresent())
                 .map(field -> ((SpecificFieldNode) field).valueExpr().get())
                 .findFirst();
-        boolean listForm = current.isPresent() && current.get() instanceof ListConstructorExpressionNode;
+        boolean keyed = keyedCapabilityForm(sourceBuilder);
+        // A pre-0.9 project follows its declaration: a list stays a list, a new field is one too.
+        boolean listForm = !keyed && (current.isEmpty() || current.get() instanceof ListConstructorExpressionNode);
         String entry = listForm
                 ? "{name: " + constantNameLiteral(name) + (fields.isEmpty() ? "" : ", " + fields) + "}"
                 : capabilityKeyLiteral(name) + ": {" + fields + "}";
@@ -1063,9 +1091,79 @@ public class WorkflowUtil {
             throw new UserFacingException("The durable agent '" + agentVarName + "' already declares '" + plain
                     + "' in '" + fieldName + "'");
         }
+        if (keyed && current.isPresent() && current.get() instanceof ListConstructorExpressionNode list) {
+            return convertCapabilityListField(declaration, list, fieldName, entry, isNew ? null : editing);
+        }
         return isNew
-                ? insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entry)
+                ? insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entry, keyed)
                 : replaceAgentCapabilityEntry(sourceBuilder, declaration, entry);
+    }
+
+    // Rewrites a list-form field as the keyed mapping, every entry carried over with its `name`
+    // turned into the key, the edited one (the item at `editing`) replaced or the new one appended.
+    private static Map<Path, List<org.eclipse.lsp4j.TextEdit>> convertCapabilityListField(
+            AgentDeclaration declaration, ListConstructorExpressionNode list, String fieldName, String entry,
+            LineRange editing) {
+        List<String> entries = new ArrayList<>();
+        boolean placed = false;
+        for (Node item : list.expressions()) {
+            if (editing != null && item.lineRange().startLine().equals(editing.startLine())) {
+                entries.add(entry);
+                placed = true;
+                continue;
+            }
+            entries.add(keyedCapabilityEntry(item, fieldName));
+        }
+        if (!placed) {
+            entries.add(entry);
+        }
+        LinePosition open = list.openBracket().lineRange().startLine();
+        LinePosition close = list.closeBracket().lineRange().endLine();
+        String literal;
+        if (list.expressions().isEmpty() || open.line() == close.line()) {
+            literal = "{" + String.join(", ", entries) + "}";
+        } else {
+            Node first = list.expressions().get(0);
+            String entryIndent = indentOf(first, first.lineRange().startLine());
+            Node field = list.parent();
+            String fieldIndent = indentOf(field, field.lineRange().startLine());
+            literal = "{\n" + entryIndent + String.join(",\n" + entryIndent, entries) + "\n" + fieldIndent + "}";
+        }
+        Map<Path, List<org.eclipse.lsp4j.TextEdit>> edits = new HashMap<>();
+        edits.put(declaration.filePath(), List.of(new org.eclipse.lsp4j.TextEdit(
+                new org.eclipse.lsp4j.Range(new org.eclipse.lsp4j.Position(open.line(), open.offset()),
+                        new org.eclipse.lsp4j.Position(close.line(), close.offset())),
+                literal)));
+        return edits;
+    }
+
+    // A list item `{name: "x", fields}` as the keyed entry `x: {fields}`. Only an inline record with a
+    // literal name converts: anything else the designer cannot rewrite, so it says what to change.
+    private static String keyedCapabilityEntry(Node item, String fieldName) {
+        String refusal = "The durable agent's '" + fieldName + "' is written as a list, which ballerina/workflow "
+                + KEYED_CAPABILITIES_SINCE + " and later do not accept, and the designer cannot rewrite its entry "
+                + "'" + item.toSourceCode().trim() + "': declare the field as a mapping keyed by name and try again";
+        if (!(item instanceof MappingConstructorExpressionNode config)) {
+            throw new UserFacingException(refusal);
+        }
+        String key = null;
+        List<String> rest = new ArrayList<>();
+        for (MappingFieldNode field : config.fields()) {
+            if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
+                    && "name".equals(specific.fieldName().toSourceCode().trim())) {
+                String literal = specific.valueExpr().get().toSourceCode().trim();
+                if (!literal.startsWith("\"") && plainTemplateBody(literal) == null) {
+                    throw new UserFacingException(refusal);
+                }
+                key = capabilityKeyLiteral(literal);
+            } else {
+                rest.add(field.toSourceCode().trim());
+            }
+        }
+        if (key == null) {
+            throw new UserFacingException(refusal);
+        }
+        return key + ": {" + String.join(", ", rest) + "}";
     }
 
     /**
