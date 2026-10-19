@@ -27,6 +27,8 @@ const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
 
 const TEMP_SUFFIX = '.tmp';
+const TEMP_MIN_AGE_MS = 10 * 60 * 1000;
+const BLOB_ID = /^[0-9a-f]{64}$/;
 
 export interface FsBlobStoreHooks {
     beforeUnlink?: (id: string) => Promise<void>;
@@ -55,8 +57,8 @@ export class FsBlobStore implements BlobStore {
         const target = this.blobPath(id);
         await fs.promises.mkdir(path.dirname(target), { recursive: true });
         const temp = `${target}.${crypto.randomBytes(6).toString('hex')}${TEMP_SUFFIX}`;
-        await fs.promises.writeFile(temp, await gzip(bytes, { level: 1 }));
         try {
+            await fs.promises.writeFile(temp, await gzip(bytes, { level: 1 }));
             await fs.promises.rename(temp, target);
         } catch (error) {
             const code = (error as NodeJS.ErrnoException)?.code;
@@ -71,6 +73,9 @@ export class FsBlobStore implements BlobStore {
     }
 
     async get(id: string): Promise<Buffer | undefined> {
+        if (!BLOB_ID.test(id)) {
+            return undefined;
+        }
         let stored: Buffer;
         try {
             stored = await fs.promises.readFile(this.blobPath(id));
@@ -84,15 +89,20 @@ export class FsBlobStore implements BlobStore {
         try {
             bytes = await gunzip(stored);
         } catch {
+            await this.removeCorrupt(id);
             throw new CheckpointBlobCorruptError(`Checkpoint blob ${id} is not valid gzip`);
         }
         if (crypto.createHash('sha256').update(bytes).digest('hex') !== id) {
+            await this.removeCorrupt(id);
             throw new CheckpointBlobCorruptError(`Checkpoint blob ${id} failed its checksum`);
         }
         return bytes;
     }
 
     async touch(id: string): Promise<boolean> {
+        if (!BLOB_ID.test(id)) {
+            return false;
+        }
         const now = new Date();
         try {
             await fs.promises.utimes(this.blobPath(id), now, now);
@@ -121,8 +131,12 @@ export class FsBlobStore implements BlobStore {
             let names: string[];
             try {
                 names = await fs.promises.readdir(shardDir);
-            } catch {
-                continue;
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException)?.code;
+                if (code === 'ENOENT' || code === 'ENOTDIR') {
+                    continue;
+                }
+                throw error;
             }
             for (const name of names) {
                 const isTemp = name.endsWith(TEMP_SUFFIX);
@@ -135,7 +149,8 @@ export class FsBlobStore implements BlobStore {
                 const file = path.join(shardDir, name);
                 try {
                     const stat = await fs.promises.stat(file);
-                    if (minAgeMs > 0 && Date.now() - stat.mtimeMs < minAgeMs) {
+                    const floor = isTemp ? Math.max(minAgeMs, TEMP_MIN_AGE_MS) : minAgeMs;
+                    if (floor > 0 && Date.now() - stat.mtimeMs < floor) {
                         continue;
                     }
                     await fs.promises.unlink(file);
@@ -150,6 +165,10 @@ export class FsBlobStore implements BlobStore {
             }
         }
         return deleted;
+    }
+
+    private async removeCorrupt(id: string): Promise<void> {
+        await fs.promises.rm(this.blobPath(id), { force: true });
     }
 
     private blobPath(id: string): string {

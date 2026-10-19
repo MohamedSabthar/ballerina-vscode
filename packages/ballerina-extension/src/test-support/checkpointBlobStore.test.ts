@@ -156,4 +156,37 @@ describe('FsBlobStore', () => {
         expect(await store.sweep(new Set(), 3_600_000)).toBe(0);
         expect(await store.get(id)).toBeDefined();
     });
+
+    it('sweep with zero min age still protects fresh temp files', async () => {
+        const store = new FsBlobStore(dir);
+        const { id } = await store.put(Buffer.from('x'));
+        const fresh = path.join(dir, id.slice(0, 2), `${id}.aaaa.tmp`);
+        const stale = path.join(dir, id.slice(0, 2), `${id}.bbbb.tmp`);
+        fs.writeFileSync(fresh, 'y');
+        fs.writeFileSync(stale, 'o');
+        const t = new Date(Date.now() - 3_600_000);
+        fs.utimesSync(stale, t, t);
+        await store.sweep(new Set([id]), 0);
+        expect(fs.existsSync(fresh)).toBe(true);
+        expect(fs.existsSync(stale)).toBe(false);
+    });
+
+    it('treats malformed ids as missing', async () => {
+        const store = new FsBlobStore(dir);
+        for (const bad of ['../../etc/passwd', 'z'.repeat(64)]) {
+            expect(await store.get(bad)).toBeUndefined();
+            expect(await store.touch(bad)).toBe(false);
+        }
+    });
+
+    it('removes a corrupt blob so a later put recreates it', async () => {
+        const store = new FsBlobStore(dir);
+        const bytes = Buffer.from('heal me');
+        const { id } = await store.put(bytes);
+        fs.writeFileSync(blobFile(id), Buffer.from('garbage'));
+        await expect(store.get(id)).rejects.toBeInstanceOf(CheckpointBlobCorruptError);
+        expect(fs.existsSync(blobFile(id))).toBe(false);
+        expect(await store.put(bytes)).toEqual({ id, created: true });
+        expect(await store.get(id)).toEqual(bytes);
+    });
 });
