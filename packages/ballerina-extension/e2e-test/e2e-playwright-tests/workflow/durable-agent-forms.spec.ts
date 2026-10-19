@@ -24,7 +24,7 @@ import { DEFAULT_PROJECT_NAME } from '../utils/helpers/constants';
 import { ProjectExplorer } from '../utils/pages';
 import { logStep } from '../utils/helpers/progress';
 import { dismissTypeHelper, fillUnderLabel, openPaletteBelow, paletteItem, workflowPaletteItem } from './palette';
-import { fillExEditor, fillTextField, getWebview, selectDropdown, switchToExpression } from './roleFields';
+import { exEditorText, fillExEditor, fillTextField, getWebview, selectDropdown, switchToExpression } from './roleFields';
 
 // The durable agent's forms write what ballerina/workflow 1.0 declares: `events` and `humanTasks` are maps
 // keyed by the name (wso2/product-integrator#2809), a send on a one-way channel discards its token (#2811),
@@ -54,6 +54,16 @@ async function openFromOverview(webview: Frame, name: string, ready: Locator): P
 
 // Saves the open form and waits for the panel to close. A form that stays open was refused, and the field
 // messages say why: fail on them rather than on a silent timeout.
+// Fills an expression-mode field and waits for the form to hold the value: the editor is written through
+// CodeMirror, and a Save that follows too soon reaches the language server with the field still blank
+// (seen as "Name who may decide this: fill in the roles, the users, or both" on the roles field).
+async function fillExpression(webview: Frame, key: string, value: string): Promise<void> {
+    await fillExEditor(webview, key, value);
+    await page.page.keyboard.press('Tab');
+    await expect.poll(() => exEditorText(webview, key), { timeout: 15000 }).toBe(value);
+    await page.page.waitForTimeout(800);
+}
+
 async function saveForm(panel: Locator): Promise<void> {
     const saveButton = panel.getByRole('button', { name: 'Save' }).first();
     await saveButton.waitFor({ state: 'visible', timeout: 60000 });
@@ -125,7 +135,7 @@ export default function createTests() {
             const panel = webview.getByTestId('side-panel');
             await fillTextField(panel, 'Task Name', 'managerApproval');
             await switchToExpression(panel, 'userRoles');
-            await fillExEditor(webview, 'userRoles', '"MANAGER"');
+            await fillExpression(webview, 'userRoles', '"MANAGER"');
             await fillUnderLabel(panel, 'Completion Type', 'BillDetails');
             await saveForm(panel);
             await expect.poll(mainSource, { timeout: 90000 })
@@ -136,7 +146,7 @@ export default function createTests() {
             await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
             await fillTextField(panel, 'Task Name', 'financeApproval');
             await switchToExpression(panel, 'userRoles');
-            await fillExEditor(webview, 'userRoles', '"FINANCE"');
+            await fillExpression(webview, 'userRoles', '"FINANCE"');
             await saveForm(panel);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\}\s*,\s*financeApproval:\s*\{userRoles:\s*"FINANCE"\}\s*\}/);
