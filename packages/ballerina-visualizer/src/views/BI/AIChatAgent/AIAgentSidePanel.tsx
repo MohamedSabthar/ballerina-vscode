@@ -910,7 +910,9 @@ export function AIAgentSidePanel(props: BIFlowDiagramProps) {
                 functionNode.current = functionNodeTemplate.flowNode as FunctionNode;
             } else if (functionNodeTemplate.flowNode?.properties) {
                 // Result Type comes from the call template, which moves `error` out of the type into checkError.
-                funcDef.properties.checkError = functionNodeTemplate.flowNode.properties.checkError;
+                if (functionNodeTemplate.flowNode.properties.type) {
+                    funcDef.properties.checkError = functionNodeTemplate.flowNode.properties.checkError;
+                }
                 functionParameterFields = convertConfig(functionNodeTemplate.flowNode.properties, ["variable", "checkError"], false);
                 functionParameterFields.forEach((field, idx) => {
                     if (getPrimaryInputType(field.types)?.fieldType === "TYPE") {
