@@ -384,8 +384,8 @@ test.afterAll(async () => {
                         done();
                     }
                 });
-                const killed = killProcessTree(electronProcess.pid, children);
-                console.log(`✅ VS Code Electron app terminated (${killed} of its ${children.length} child processes killed with it)`);
+                const killed = killProcessTree(electronProcess.pid, children) + helpers.reapAllProcessesSeenUnderVSCode();
+                console.log(`✅ VS Code Electron app terminated (${killed} processes it or its reloads had spawned killed with it)`);
             } else {
                 console.log('ℹ️  No live Electron process to terminate');
             }

@@ -21,7 +21,7 @@ import { test } from '@playwright/test';
 import fs, { existsSync } from 'fs';
 import path from 'path';
 import { execFileSync, execSync } from 'child_process';
-import { descendantPids, killProcessTree } from './processTree';
+import { commandsOf, descendantPids, killProcessTree } from './processTree';
 import { getWebview } from './webview';
 import { BI_INTEGRATOR_LABEL, BI_WEBVIEW_NOT_FOUND_ERROR, DEFAULT_PROJECT_FOLDER_NAME, DEFAULT_PROJECT_NAME } from './constants';
 import { waitForBISidebarTreeView } from './sidebar';
@@ -271,10 +271,19 @@ function reapProcessesLeftBehind(): void {
     const stillUnder = new Set(processesUnderVSCode());
     const stale = [...processesSeenUnderVSCode].filter((pid) => !stillUnder.has(pid));
     stale.forEach((pid) => processesSeenUnderVSCode.delete(pid));
+    const commands = commandsOf(stale);
     const killed = killProcessTree(-1, stale);
     if (killed > 0) {
-        console.log(`  🧹 Killed ${killed} processes the previous extension host left behind`);
+        console.log(`  🧹 Killed ${killed} processes the previous extension host left behind: ${commands.join('; ')}`);
     }
+}
+
+// At suite teardown nothing seen under Electron should outlive it, reparented or not.
+export function reapAllProcessesSeenUnderVSCode(): number {
+    processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
+    const killed = killProcessTree(-1, [...processesSeenUnderVSCode]);
+    processesSeenUnderVSCode.clear();
+    return killed;
 }
 
 async function reloadWindow(): Promise<void> {
