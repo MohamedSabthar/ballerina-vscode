@@ -21,6 +21,7 @@ import { test } from '@playwright/test';
 import fs, { existsSync } from 'fs';
 import path from 'path';
 import { execFileSync, execSync } from 'child_process';
+import { descendantPids, killProcessTree } from './processTree';
 import { getWebview } from './webview';
 import { BI_INTEGRATOR_LABEL, BI_WEBVIEW_NOT_FOUND_ERROR, DEFAULT_PROJECT_FOLDER_NAME, DEFAULT_PROJECT_NAME } from './constants';
 import { waitForBISidebarTreeView } from './sidebar';
@@ -255,23 +256,52 @@ function ensureMacElectronSymlink(): void {
     }
 }
 
+// A Reload Window restarts the extension host without waiting for the language server it spawned
+// to exit, so each reload leaves a JVM behind until the job ends (19 of them after a group 5 job).
+// Every process seen under Electron is remembered, and after a reload those no longer under it are
+// killed.
+const processesSeenUnderVSCode = new Set<number>();
+
+function processesUnderVSCode(): number[] {
+    const pid = vscode?.process?.()?.pid;
+    return pid ? descendantPids(pid) : [];
+}
+
+function reapProcessesLeftBehind(): void {
+    const stillUnder = new Set(processesUnderVSCode());
+    const stale = [...processesSeenUnderVSCode].filter((pid) => !stillUnder.has(pid));
+    stale.forEach((pid) => processesSeenUnderVSCode.delete(pid));
+    const killed = killProcessTree(-1, stale);
+    if (killed > 0) {
+        console.log(`  🧹 Killed ${killed} processes the previous extension host left behind`);
+    }
+}
+
+async function reloadWindow(): Promise<void> {
+    processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
+    await page.executePaletteCommand('Reload Window');
+    await page.page.waitForTimeout(3000).catch(() => undefined);
+    page = new ExtendedPage(await vscode!.firstWindow({ timeout: 60000 }));
+    reapProcessesLeftBehind();
+}
+
 async function initVSCode(workspacePath: string = newProjectPath) {
     if (vscode && page) {
-        await page.executePaletteCommand('Reload Window');
-    } else {
-        ensureMacElectronSymlink();
-        const profileName = getVsCodeProfileName();
-        const launchExtensionsFolder = await prepareExtensionsForLaunch(profileName);
-        vscode = await startVSCode(
-            resourcesFolder,
-            vscodeVersion,
-            undefined,
-            false,
-            launchExtensionsFolder,
-            workspacePath,
-            profileName
-        );
+        await reloadWindow();
+        return;
     }
+    ensureMacElectronSymlink();
+    const profileName = getVsCodeProfileName();
+    const launchExtensionsFolder = await prepareExtensionsForLaunch(profileName);
+    vscode = await startVSCode(
+        resourcesFolder,
+        vscodeVersion,
+        undefined,
+        false,
+        launchExtensionsFolder,
+        workspacePath,
+        profileName
+    );
     page = new ExtendedPage(await vscode!.firstWindow({ timeout: 60000 }));
 }
 
@@ -297,23 +327,23 @@ export async function reacquireWindow(timeout: number = 60000): Promise<boolean>
 
 async function resumeVSCode() {
     if (vscode && page) {
-        await page.executePaletteCommand('Reload Window');
-    } else {
-        console.log('Starting VSCode');
-        ensureMacElectronSymlink();
-        const profileName = getVsCodeProfileName();
-        const launchExtensionsFolder = await prepareExtensionsForLaunch(profileName);
-        vscode = await startVSCode(
-            resourcesFolder,
-            vscodeVersion,
-            undefined,
-            false,
-            launchExtensionsFolder,
-            newProjectPath,
-            profileName
-        );
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await reloadWindow();
+        return;
     }
+    console.log('Starting VSCode');
+    ensureMacElectronSymlink();
+    const profileName = getVsCodeProfileName();
+    const launchExtensionsFolder = await prepareExtensionsForLaunch(profileName);
+    vscode = await startVSCode(
+        resourcesFolder,
+        vscodeVersion,
+        undefined,
+        false,
+        launchExtensionsFolder,
+        newProjectPath,
+        profileName
+    );
+    await new Promise(resolve => setTimeout(resolve, 5000));
     page = new ExtendedPage(await vscode!.firstWindow({ timeout: 60000 }));
 }
 
@@ -561,9 +591,7 @@ export function initTest(newProject: boolean = true, skipProjectCreation: boolea
             // branch above. The global afterAll in test.list.ts will close
             // Electron during worker teardown so the worker can exit.
             await withTimeout((async () => {
-                await page.executePaletteCommand('Reload Window');
-                await page.page.waitForTimeout(3000);
-                page = new ExtendedPage(await vscode!.firstWindow({ timeout: 60000 }));
+                await reloadWindow();
                 await page.page.waitForLoadState();
                 await page.page.waitForTimeout(5000);
                 console.log('  ⏳ Waiting for BI extension to initialize after reload...');
