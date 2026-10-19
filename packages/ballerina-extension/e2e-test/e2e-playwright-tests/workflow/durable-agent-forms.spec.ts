@@ -65,7 +65,11 @@ async function saveForm(panel: Locator): Promise<void> {
         throw new Error(`Save stayed disabled; the panel shows: ${shown}`);
     }
     await saveButton.click({ force: true });
-    await saveButton.waitFor({ state: 'hidden', timeout: 90000 });
+    // A save the LS or the form refuses leaves the panel open; its text says why, the timeout alone does not.
+    await saveButton.waitFor({ state: 'hidden', timeout: 90000 }).catch(async (error) => {
+        const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 600);
+        throw new Error(`Save did not close the form; the panel shows: ${shown}`, { cause: error });
+    });
 }
 
 export default function createTests() {
