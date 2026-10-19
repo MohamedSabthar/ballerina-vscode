@@ -21,6 +21,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { isPathInside } from '@wso2/ballerina-core/lib/utils/path-utils';
 import { RestorePlan } from './types';
+import { isLosslessUtf8 } from './backends/captureSupport';
 import { ArtifactUpdateWait, startArtifactUpdateWait } from '../../../utils/project-artifacts-handler';
 import { VisualizerRpcManager } from '../../../rpc-managers/visualizer/rpc-manager';
 import { StateMachine, updateView } from '../../../../src/stateMachine';
@@ -35,11 +36,7 @@ function readFileBytes(fileUri: vscode.Uri): Buffer | null {
     }
 }
 
-// A snapshot holds decoded strings, so bytes that do not round-trip through UTF-8 were never
-// captured faithfully — writing one back replaces real bytes with U+FFFD.
-export function isLosslessUtf8(bytes: Buffer): boolean {
-    return Buffer.from(bytes.toString('utf8'), 'utf8').equals(bytes);
-}
+export { isLosslessUtf8 };
 
 // Returns null when the path cannot be resolved for any reason other than not existing yet.
 // Walking up past an EACCES or ELOOP would rejoin the rest of the path as a plain string, which is

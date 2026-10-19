@@ -21,8 +21,10 @@ import { Checkpoint } from '@wso2/ballerina-core/lib/state-machine-types';
 import { isSamePath } from '@wso2/ballerina-core/lib/utils/path-utils';
 import { getCheckpointConfig } from './checkpointConfig';
 import { scanWorkspace } from './workspaceScanner';
-import { applyRestorePlan, isLosslessUtf8, realPathOfNearestAncestor, reportRestoreFailure } from './restoreApplier';
-import { RestorePlan } from './types';
+import { applyRestorePlan, realPathOfNearestAncestor, reportRestoreFailure } from './restoreApplier';
+import { CheckpointTooLargeError, RestorePlan } from './types';
+import { InlineSnapshotBackend } from './backends/inlineSnapshotBackend';
+import { resolveCaptureLimits } from './backends/captureSupport';
 
 export { renderDatamapper } from './restoreApplier';
 
@@ -42,79 +44,38 @@ export async function captureWorkspaceSnapshot(messageId: string): Promise<Check
     }
 
     const workspaceRoot = workspaceFolders[0].uri;
-    const workspaceSnapshot: { [filePath: string]: string } = {};
-    const fileList: string[] = [];
-    let totalSize = 0;
+    const limits = resolveCaptureLimits({ maxFileSize: config.maxFileSize, maxNewBytes: config.maxSnapshotSize });
 
     try {
         const allFiles = await scanWorkspace(workspaceRoot, config.ignorePatterns);
-
-        // Read in bounded-concurrency chunks: one-at-a-time reads dominate run-start
-        // latency on large workspaces, while unbounded Promise.all can exhaust file
-        // handles. Hand-rolled rather than mapWithConcurrency because the size cap must
-        // be able to abort between batches, which that helper cannot express; chunks
-        // also keep fileList in findFiles order.
-        const READ_CONCURRENCY = 32;
-        for (let i = 0; i < allFiles.length; i += READ_CONCURRENCY) {
-            const chunk = allFiles.slice(i, i + READ_CONCURRENCY);
-            const chunkContents = await Promise.all(chunk.map(async file => {
-                try {
-                    const fileContent = await vscode.workspace.fs.readFile(file.uri);
-                    return { file, bytes: Buffer.from(fileContent) };
-                } catch (error) {
-                    console.error(`[Checkpoint] Failed to read file ${file.uri.fsPath}:`, error);
-                    return { file, bytes: null };
-                }
-            }));
-
-            for (const entry of chunkContents) {
-                if (!entry) { continue; }
-                const relativePath = entry.file.path;
-                fileList.push(relativePath);
-
-                // Unreadable at capture — locked by another process, or permission denied. Listing it
-                // without snapshotting it is what stops the restore deleting a file it never held.
-                if (!entry.bytes) {
-                    continue;
-                }
-
-                // Listed but not snapshotted: a snapshot holds strings, so bytes that do not survive
-                // a UTF-8 round trip cannot be reproduced. Being in fileList keeps a restore from
-                // deleting it; being out of the snapshot keeps a restore from writing a lossy decode
-                // over it. Its size is not counted either — nothing is stored for it.
-                if (!isLosslessUtf8(entry.bytes)) {
-                    continue;
-                }
-
-                const content = entry.bytes.toString('utf8');
-                workspaceSnapshot[relativePath] = content;
-                totalSize += content.length;
-            }
-
-            if (totalSize > config.maxSnapshotSize) {
-                // Fail closed rather than save a partial checkpoint that silently leaves
-                // later-scanned files unrevertible on restore.
-                console.warn(`[Checkpoint] Snapshot size exceeded max limit (${totalSize} bytes) — aborting capture, no partial checkpoint will be saved`);
-                vscode.window.showWarningMessage(
-                    `Workspace is too large to checkpoint (exceeds ${Math.round(config.maxSnapshotSize / 1024 / 1024)}MB). This generation will not be revertible.`
-                );
-                return null;
-            }
-        }
+        const result = await new InlineSnapshotBackend().capture({
+            workspaceRoot: workspaceRoot.fsPath,
+            files: allFiles,
+            limits
+        });
 
         const checkpoint: Checkpoint = {
             id: generateId(),
             messageId,
             timestamp: Date.now(),
-            workspaceSnapshot,
-            fileList,
-            snapshotSize: totalSize,
+            ...result.fields,
+            fileList: allFiles.map(file => file.path),
+            snapshotSize: result.newBytes,
             workspaceRoot: workspaceRoot.fsPath,
             ignorePatterns: config.ignorePatterns
         };
 
         return checkpoint;
     } catch (error) {
+        if (error instanceof CheckpointTooLargeError) {
+            // Fail closed rather than save a partial checkpoint that silently leaves
+            // later-scanned files unrevertible on restore.
+            console.warn(`[Checkpoint] ${error.message} — aborting capture, no partial checkpoint will be saved`);
+            vscode.window.showWarningMessage(
+                `Workspace is too large to checkpoint (exceeds ${Math.round(limits.maxNewBytes / 1024 / 1024)}MB). This generation will not be revertible.`
+            );
+            return null;
+        }
         console.error('[Checkpoint] Failed to capture workspace snapshot:', error);
         vscode.window.showErrorMessage('Failed to create checkpoint: ' + (error as Error).message);
         return null;
