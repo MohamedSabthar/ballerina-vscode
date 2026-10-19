@@ -424,6 +424,11 @@ public class WorkflowUtil {
         if (declaration == null) {
             throw new UserFacingException("Cannot locate the durable agent declaration: " + agentVarName);
         }
+        return insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entryText);
+    }
+
+    private static Map<Path, List<org.eclipse.lsp4j.TextEdit>> insertAgentCapabilityEntry(
+            SourceBuilder sourceBuilder, AgentDeclaration declaration, String fieldName, String entryText) {
         MappingConstructorExpressionNode config = declaration.config();
 
         LinePosition insertAt = null;
@@ -500,7 +505,12 @@ public class WorkflowUtil {
      */
     public static Map<Path, List<org.eclipse.lsp4j.TextEdit>> replaceAgentCapabilityEntry(
             SourceBuilder sourceBuilder, String agentVarName, String entryText) {
-        AgentDeclaration declaration = findAgentDeclaration(sourceBuilder, agentVarName);
+        return replaceAgentCapabilityEntry(sourceBuilder, findAgentDeclaration(sourceBuilder, agentVarName),
+                entryText);
+    }
+
+    private static Map<Path, List<org.eclipse.lsp4j.TextEdit>> replaceAgentCapabilityEntry(
+            SourceBuilder sourceBuilder, AgentDeclaration declaration, String entryText) {
         LineRange entryRange = sourceBuilder.flowNode.codedata().lineRange();
         if (declaration == null || entryRange == null) {
             throw new UserFacingException("Cannot locate the durable agent capability entry to update");
@@ -883,14 +893,24 @@ public class WorkflowUtil {
                     + filePath, e);
             return Optional.empty();
         }
+        // The statement's own module first, so a same-named agent elsewhere cannot answer for it.
+        Optional<Module> own = workspaceManager.module(filePath);
+        List<Module> modules = new ArrayList<>();
+        own.ifPresent(modules::add);
         for (Module module : project.currentPackage().modules()) {
+            if (own.isEmpty() || !module.moduleId().equals(own.get().moduleId())) {
+                modules.add(module);
+            }
+        }
+        for (Module module : modules) {
             for (DocumentId documentId : module.documentIds()) {
                 ModulePartNode root = module.document(documentId).syntaxTree().rootNode();
                 for (ModuleMemberDeclarationNode member : root.members()) {
                     if (!(member instanceof ModuleVariableDeclarationNode varDecl)
                             || !(varDecl.typedBindingPattern().bindingPattern()
                                     instanceof CaptureBindingPatternNode capture)
-                            || !capture.variableName().text().equals(targetAgent)) {
+                            || !capture.variableName().text().equals(targetAgent)
+                            || !isDurableAgentTyped(varDecl)) {
                         continue;
                     }
                     Optional<MappingConstructorExpressionNode> config = agentConfigLiteral(varDecl);
@@ -898,16 +918,29 @@ public class WorkflowUtil {
                         continue;
                     }
                     for (CapabilityEntry entry : declaredEvents(config.get())) {
-                        if (entry.name().equals(eventName)) {
-                            return Optional.of(entry.config() != null && entry.config().fields().stream()
-                                    .anyMatch(field -> field instanceof SpecificFieldNode specific
-                                            && "response".equals(specific.fieldName().toSourceCode().trim())));
+                        if (!entry.name().equals(eventName)) {
+                            continue;
                         }
+                        // A config written as a reference or built from a spread may declare a
+                        // response this scan cannot see: no answer, rather than a wrong one.
+                        if (entry.config() == null || entry.config().fields().stream()
+                                .anyMatch(field -> field.kind() == SyntaxKind.SPREAD_FIELD)) {
+                            return Optional.empty();
+                        }
+                        return Optional.of(entry.config().fields().stream()
+                                .anyMatch(field -> field instanceof SpecificFieldNode specific
+                                        && "response".equals(specific.fieldName().toSourceCode().trim())));
                     }
                 }
             }
         }
         return Optional.empty();
+    }
+
+    private static boolean isDurableAgentTyped(ModuleVariableDeclarationNode varDecl) {
+        String typeText = varDecl.typedBindingPattern().typeDescriptor().toSourceCode().trim();
+        return typeText.equals(Constants.Workflow.DURABLE_AGENT_OBJECT_CLASS_NAME)
+                || typeText.endsWith(":" + Constants.Workflow.DURABLE_AGENT_OBJECT_CLASS_NAME);
     }
 
     /**
@@ -1006,15 +1039,32 @@ public class WorkflowUtil {
             SourceBuilder sourceBuilder, String fieldName, String name, String fields) {
         String agentVarName = sourceBuilder.flowNode.codedata().parentSymbol();
         AgentDeclaration declaration = findAgentDeclaration(sourceBuilder, agentVarName);
-        boolean listForm = declaration != null && declaration.config().fields().stream()
-                .anyMatch(field -> field instanceof SpecificFieldNode specific
+        if (declaration == null) {
+            throw new UserFacingException("Cannot locate the durable agent declaration: " + agentVarName);
+        }
+        Optional<ExpressionNode> current = declaration.config().fields().stream()
+                .filter(field -> field instanceof SpecificFieldNode specific
                         && fieldName.equals(specific.fieldName().toSourceCode().trim())
-                        && specific.valueExpr().isPresent()
-                        && specific.valueExpr().get() instanceof ListConstructorExpressionNode);
+                        && specific.valueExpr().isPresent())
+                .map(field -> ((SpecificFieldNode) field).valueExpr().get())
+                .findFirst();
+        boolean listForm = current.isPresent() && current.get() instanceof ListConstructorExpressionNode;
         String entry = listForm
                 ? "{name: " + constantNameLiteral(name) + (fields.isEmpty() ? "" : ", " + fields) + "}"
                 : capabilityKeyLiteral(name) + ": {" + fields + "}";
-        return upsertAgentCapabilityEntry(sourceBuilder, fieldName, entry);
+        boolean isNew = Boolean.TRUE.equals(sourceBuilder.flowNode.codedata().isNew())
+                || sourceBuilder.flowNode.codedata().lineRange() == null;
+        if (!isNew) {
+            return replaceAgentCapabilityEntry(sourceBuilder, declaration, entry);
+        }
+        // A second entry under the same name is a duplicate key the compiler reports far from the form.
+        String plain = capabilityName(constantNameLiteral(name));
+        if (current.isPresent() && capabilityEntries(current.get()).stream()
+                .anyMatch(existing -> existing.name().equals(plain))) {
+            throw new UserFacingException("The durable agent '" + agentVarName + "' already declares '" + plain
+                    + "' in '" + fieldName + "'");
+        }
+        return insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entry);
     }
 
     /**
@@ -1026,11 +1076,17 @@ public class WorkflowUtil {
      */
     public static String capabilityKeyLiteral(String name) {
         String literal = constantNameLiteral(name);
+        // An interpolated template would become a key that spells the template's source; the
+        // list form has the plugin to refuse it, the keyed form has only this.
+        if (!literal.startsWith("\"")) {
+            throw new UserFacingException("A capability name must be a constant: '" + literal
+                    + "' interpolates a value");
+        }
         String plain = capabilityName(literal);
         if (plain.matches("[A-Za-z_][A-Za-z0-9_]*") && !SyntaxInfo.isKeyword(plain)) {
             return plain;
         }
-        return literal.startsWith("\"") ? literal : stringLiteral(plain);
+        return literal;
     }
 
     /**
@@ -1886,7 +1942,8 @@ public class WorkflowUtil {
             if (!(field instanceof SpecificFieldNode specificField) || specificField.valueExpr().isEmpty()) {
                 continue;
             }
-            // The list form's items and the keyed form's fields delete the same way.
+            // The list form's items and the keyed form's fields delete the same way; only a
+            // capability field is a candidate, never a mapping like systemPrompt.
             List<? extends Node> expressions;
             Node open;
             Node close;
@@ -1894,7 +1951,8 @@ public class WorkflowUtil {
                 expressions = list.expressions().stream().toList();
                 open = list.openBracket();
                 close = list.closeBracket();
-            } else if (specificField.valueExpr().get() instanceof MappingConstructorExpressionNode keyed) {
+            } else if (specificField.valueExpr().get() instanceof MappingConstructorExpressionNode keyed
+                    && KEYED_CAPABILITY_FIELDS.contains(specificField.fieldName().toSourceCode().trim())) {
                 expressions = keyed.fields().stream().toList();
                 open = keyed.openBrace();
                 close = keyed.closeBrace();

@@ -19,6 +19,7 @@
 package io.ballerina.flowmodelgenerator.core.model.node;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.flowmodelgenerator.core.UserFacingException;
 import io.ballerina.flowmodelgenerator.core.model.NodeKind;
@@ -29,12 +30,15 @@ import io.ballerina.flowmodelgenerator.core.utils.FlowNodeUtil;
 import io.ballerina.flowmodelgenerator.core.utils.WorkflowUtil;
 import io.ballerina.modelgenerator.commons.FileSystemUtils;
 import io.ballerina.modelgenerator.commons.ParameterData;
+import io.ballerina.projects.Document;
 import org.ballerinalang.langserver.common.utils.NameUtil;
 import org.eclipse.lsp4j.TextEdit;
 
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static io.ballerina.flowmodelgenerator.core.Constants.Workflow.AGENT_SEND_DATA_DESCRIPTION;
 import static io.ballerina.flowmodelgenerator.core.Constants.Workflow.AGENT_SEND_DATA_LABEL;
@@ -174,10 +178,14 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
         String data = requireValue(sourceBuilder, DATA_KEY, "The request payload is required");
 
         boolean checkError = FlowNodeUtil.hasCheckKeyFlagSet(sourceBuilder.flowNode);
+        // A cleared Result falls back to the same deduplicated name the template offered, so two
+        // sends in one function do not declare the token twice.
         String variableName = sourceBuilder.getProperty(Property.VARIABLE_KEY)
-                .map(p -> p.value() == null || p.value().toString().isEmpty()
-                        ? DEFAULT_TOKEN_VAR : p.value().toString())
-                .orElse(DEFAULT_TOKEN_VAR);
+                .map(p -> p.value() == null || p.value().toString().isEmpty() ? null : p.value().toString())
+                .orElse(null);
+        if (variableName == null) {
+            variableName = NameUtil.generateVariableName(DEFAULT_TOKEN_VAR, visibleSymbolNames(sourceBuilder));
+        }
 
         String expression = agent + "." + AGENT_SEND_DATA_METHOD_NAME
                 + "(" + String.join(", ", List.of(agentId, eventName, data)) + ")";
@@ -185,15 +193,16 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
         // sendData answers `string|error` on every channel: that value is the turn's correlation
         // token, never the channel's declared `response`. On a channel that declares one, the token
         // is what Get Agent Data Result reads the response with; on a one-way channel there is
-        // nothing to read, the compiler plugin rejects binding the token, and it is discarded —
-        // always through `check`, since `_` cannot take the error member. A declaration that cannot
-        // be read keeps the binding: the compiler says which one it is, a silent discard would not.
+        // nothing to read, the compiler plugin rejects binding the token, and it is discarded. `_`
+        // cannot take the error member, so the discard goes through `check`, or `checkpanic` when
+        // Check Error is off (a function that returns no error can still send). A declaration that
+        // cannot be read keeps the binding: the compiler says which one it is, a silent discard would not.
         boolean oneWay = WorkflowUtil.agentEventDeclaresResponse(sourceBuilder.workspaceManager,
                 sourceBuilder.filePath, agent, WorkflowUtil.capabilityName(eventName))
                 .map(declares -> !declares).orElse(false);
         if (oneWay) {
             sourceBuilder.token().name("_").whiteSpace().keyword(SyntaxKind.EQUAL_TOKEN)
-                    .keyword(SyntaxKind.CHECK_KEYWORD);
+                    .keyword(checkError ? SyntaxKind.CHECK_KEYWORD : SyntaxKind.CHECKPANIC_KEYWORD);
         } else {
             sourceBuilder.token()
                     .name(checkError ? STRING_TYPE : STRING_TYPE + "|error")
@@ -213,6 +222,23 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
                 .textEdit()
                 .acceptImport(WORKFLOW_ORG, WORKFLOW_MODULE)
                 .build();
+    }
+
+    // The names in scope at the statement, as the template saw them.
+    private static Set<String> visibleSymbolNames(SourceBuilder sourceBuilder) {
+        Set<String> names = new HashSet<>();
+        try {
+            SemanticModel semanticModel =
+                    FileSystemUtils.getSemanticModel(sourceBuilder.workspaceManager, sourceBuilder.filePath);
+            Document document = FileSystemUtils.getDocument(sourceBuilder.workspaceManager, sourceBuilder.filePath);
+            for (Symbol symbol : semanticModel.visibleSymbols(document,
+                    sourceBuilder.flowNode.codedata().lineRange().startLine())) {
+                symbol.getName().ifPresent(names::add);
+            }
+        } catch (RuntimeException e) {
+            // Without the scope the plain default is still a valid name.
+        }
+        return names;
     }
 
     private static String requireValue(SourceBuilder sourceBuilder, String key, String message) {

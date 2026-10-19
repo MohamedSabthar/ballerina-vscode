@@ -35,8 +35,16 @@ export function controlUnder(scope: Locator, label: string): Locator {
         .locator(`xpath=.//*[${controls}]`).filter({ visible: true }).first();
 }
 
+// Prefer the control's accessible name (a web component keeps its textarea in a shadow root, which the
+// role query reaches), then the control nearest the label.
+function fieldByLabel(scope: Locator, label: string): Locator {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const accessible = new RegExp(`^\\s*${escaped}\\*?(?=$|[A-Z(\\[])`);
+    return scope.getByRole('textbox', { name: accessible }).or(controlUnder(scope, label)).first();
+}
+
 export async function fillUnderLabel(scope: Locator, label: string, value: string): Promise<void> {
-    let input = controlUnder(scope, label);
+    let input = fieldByLabel(scope, label);
     await input.waitFor({ state: 'visible', timeout: 30000 });
     const kind = await input.evaluate((e) => (e.classList.contains('cm-content') || e.closest('.cm-editor') ? 'cm' : e.tagName.toLowerCase()));
     if (kind === 'cm') {

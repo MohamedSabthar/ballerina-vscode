@@ -24,7 +24,7 @@ import { DEFAULT_PROJECT_NAME } from '../utils/helpers/constants';
 import { ProjectExplorer } from '../utils/pages';
 import { logStep } from '../utils/helpers/progress';
 import { fillUnderLabel, openPaletteBelow, paletteItem, workflowPaletteItem } from './palette';
-import { fillExEditor, fillTextField, getWebview, selectDropdown, switchToExpression, waitForEnabled } from './roleFields';
+import { fillExEditor, fillTextField, getWebview, selectDropdown, switchToExpression } from './roleFields';
 
 // The durable agent's forms write what ballerina/workflow 1.0 declares: `events` and `humanTasks` are maps
 // keyed by the name (wso2/product-integrator#2809), a send on a one-way channel discards its token (#2811),
@@ -38,9 +38,10 @@ function mainSource(): string {
 // Returns to the integration overview, where every artifact is listed by name.
 async function backToOverview(): Promise<void> {
     const projectExplorer = new ProjectExplorer(page.page);
-    await projectExplorer.init().catch(() => undefined);
+    await projectExplorer.init();
     await projectExplorer.goToOverview(DEFAULT_PROJECT_NAME);
-    await page.page.waitForTimeout(1000);
+    const webview = await getWebview();
+    await webview.getByText('billingAgent', { exact: true }).first().waitFor({ timeout: 90000 });
 }
 
 // Opens an artifact's diagram from the integration overview by its name.
@@ -63,7 +64,6 @@ async function saveForm(panel: Locator): Promise<void> {
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
         throw new Error(`Save stayed disabled; the panel shows: ${shown}`);
     }
-    await page.page.waitForTimeout(500);
     await saveButton.click({ force: true });
     await saveButton.waitFor({ state: 'hidden', timeout: 90000 });
 }

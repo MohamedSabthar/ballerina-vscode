@@ -19,3 +19,12 @@ final workflow:DurableAgent keyedAgent = check new ({
 function sendToKeyedAgent(string instanceId) returns error? {
 
 }
+
+final workflow:EventConfig noticeConfig = {request: json, response: string};
+
+# A channel configured through a reference: whether it answers is not readable from the declaration.
+final workflow:DurableAgent refAgent = check new ({
+    systemPrompt: {role: "Notices", instructions: "Relay notices."},
+    model: keyedModel,
+    events: {notice: noticeConfig}
+});
