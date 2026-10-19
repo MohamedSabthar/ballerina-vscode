@@ -536,6 +536,7 @@ export const Form = forwardRef((props: FormProps, _ref) => {
         setError,
         clearErrors,
         trigger,
+        getFieldState,
         formState: { isValidating, isValid: formStateIsValid, errors, dirtyFields, isDirty },
     } = useForm<FormValues>();
 
@@ -962,13 +963,15 @@ export const Form = forwardRef((props: FormProps, _ref) => {
         const removedKeys = prevFieldKeysRef.current.filter((key) => !currentKeys.has(key));
         if (removedKeys.length > 0) {
             unregister(removedKeys);
-            const erroredKeys = Object.keys(errors).filter((key) => currentKeys.has(key));
+            // By field state, not the top-level error keys: a dotted key such as `config.type` keeps
+            // its error nested under `config`.
+            const erroredKeys = Array.from(currentKeys).filter((key) => getFieldState(key as keyof FormValues & string).error);
             if (erroredKeys.length > 0) {
                 trigger(erroredKeys);
             }
         }
         prevFieldKeysRef.current = Array.from(currentKeys);
-    }, [formFields, unregister, trigger]);
+    }, [formFields, unregister, trigger, getFieldState]);
 
     // has advance fields
     const groupIds = useMemo(() => new Set((groups ?? []).map((group) => group.id)), [groups]);
