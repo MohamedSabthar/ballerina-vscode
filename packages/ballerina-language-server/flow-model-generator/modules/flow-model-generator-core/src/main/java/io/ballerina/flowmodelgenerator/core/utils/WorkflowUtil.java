@@ -1052,19 +1052,20 @@ public class WorkflowUtil {
         String entry = listForm
                 ? "{name: " + constantNameLiteral(name) + (fields.isEmpty() ? "" : ", " + fields) + "}"
                 : capabilityKeyLiteral(name) + ": {" + fields + "}";
-        boolean isNew = Boolean.TRUE.equals(sourceBuilder.flowNode.codedata().isNew())
-                || sourceBuilder.flowNode.codedata().lineRange() == null;
-        if (!isNew) {
-            return replaceAgentCapabilityEntry(sourceBuilder, declaration, entry);
-        }
-        // A second entry under the same name is a duplicate key the compiler reports far from the form.
+        LineRange editing = sourceBuilder.flowNode.codedata().lineRange();
+        boolean isNew = Boolean.TRUE.equals(sourceBuilder.flowNode.codedata().isNew()) || editing == null;
+        // A second entry under the same name is a duplicate key the compiler reports far from the
+        // form: refused on insert, and on an edit that renames an entry onto another one.
         String plain = capabilityName(constantNameLiteral(name));
         if (current.isPresent() && capabilityEntries(current.get()).stream()
-                .anyMatch(existing -> existing.name().equals(plain))) {
+                .anyMatch(existing -> existing.name().equals(plain)
+                        && (isNew || !existing.node().lineRange().startLine().equals(editing.startLine())))) {
             throw new UserFacingException("The durable agent '" + agentVarName + "' already declares '" + plain
                     + "' in '" + fieldName + "'");
         }
-        return insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entry);
+        return isNew
+                ? insertAgentCapabilityEntry(sourceBuilder, declaration, fieldName, entry)
+                : replaceAgentCapabilityEntry(sourceBuilder, declaration, entry);
     }
 
     /**
