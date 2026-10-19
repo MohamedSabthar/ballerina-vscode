@@ -28,7 +28,7 @@ import { fillExEditor, fillTextField, getWebview, selectDropdown, switchToExpres
 
 // The durable agent's forms write what ballerina/workflow 1.0 declares: `events` and `humanTasks` are maps
 // keyed by the name (wso2/product-integrator#2809), a send on a one-way channel discards its token (#2811),
-// and the Generate form saves inside an activity whose return type includes error (#2810).
+// and the Generate form saves inside an activity whose return type includes error, first or below another node (#2810).
 const PROJECT_TEMPLATE = path.join(__dirname, '..', 'data', 'durable_agent_forms_project');
 
 function mainSource(): string {
@@ -187,6 +187,53 @@ export default function createTests() {
             await saveForm(panel);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/BillDetails details = check wso2ModelProvider->generate\(/);
+        });
+
+        // The form that failed is the one opened right after a write in the same activity: the form's fields settle in
+        // more than one pass, and a field leaving the form re-checked it while Expected Type was empty.
+        test('Generate saves right after another node is added to an activity', async () => {
+            logStep('Open the readReceipt activity from the overview');
+            await backToOverview();
+            const webview = await getWebview();
+            await openFromOverview(webview, 'readReceipt', webview.getByTestId('bi-diagram-canvas'));
+
+            logStep('Add a call to fetchReceiptId below Start');
+            let sidePanel = await openPaletteBelow(webview, 'Start');
+            await (await paletteItem(sidePanel, 'Statement', 'Call Function')).click({ force: true });
+            let panel = webview.getByTestId('side-panel');
+            const withinProject = panel.getByText('Within Project', { exact: true }).first();
+            await withinProject.waitFor({ state: 'visible', timeout: 60000 });
+            await withinProject.click({ force: true });
+            const fetchId = panel.getByText('fetchReceiptId', { exact: true }).first();
+            await fetchId.waitFor({ state: 'visible', timeout: 60000 });
+            await fetchId.click({ force: true });
+            await fillUnderLabel(panel, 'File Url', 'fileUrl');
+            const idResult = panel.getByRole('textbox', { name: /Result/ }).first();
+            await idResult.waitFor({ timeout: 60000 });
+            await idResult.fill('receiptId');
+            await idResult.press('Tab');
+            await saveForm(panel);
+            await expect.poll(mainSource, { timeout: 90000 }).toMatch(/receiptId = check fetchReceiptId\(fileUrl\);/);
+
+            logStep('Right after, add Generate below the call, with BillDetails as the expected type');
+            sidePanel = await openPaletteBelow(webview, 'fetchReceiptId');
+            await (await paletteItem(sidePanel, 'AI', 'Model Provider')).click({ force: true });
+            panel = webview.getByTestId('side-panel');
+            const provider = panel.getByText('wso2ModelProvider', { exact: true }).first();
+            await provider.waitFor({ state: 'visible', timeout: 60000 });
+            await provider.click({ force: true });
+            const generate = panel.getByText('Generate', { exact: true }).first();
+            await generate.waitFor({ state: 'visible', timeout: 60000 });
+            await generate.click({ force: true });
+            await fillUnderLabel(panel, 'Prompt', 'Read the receipt');
+            const result = panel.getByRole('textbox', { name: /Result/ }).first();
+            await result.waitFor({ timeout: 60000 });
+            await result.fill('details');
+            await result.press('Tab');
+            await fillUnderLabel(panel, 'Expected Type', 'BillDetails');
+            await saveForm(panel);
+            await expect.poll(mainSource, { timeout: 90000 })
+                .toMatch(/fetchReceiptId\(fileUrl\);\s*BillDetails details = check wso2ModelProvider->generate\(/);
         });
     });
 }

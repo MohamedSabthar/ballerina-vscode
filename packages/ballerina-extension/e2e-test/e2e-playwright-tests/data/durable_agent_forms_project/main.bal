@@ -14,6 +14,17 @@ function readBill(string fileUrl) returns BillDetails|error {
     return {id: fileUrl, amount: 0};
 }
 
+# Looks up a receipt's id
+function fetchReceiptId(string fileUrl) returns string|error {
+    return fileUrl.trim();
+}
+
+# Reads a receipt: the test adds a call, then Generate right after it (wso2/product-integrator#2810)
+@workflow:Activity
+function readReceipt(string fileUrl) returns BillDetails|error {
+    return {id: fileUrl, amount: 0};
+}
+
 # Billing durable agentic workflow, declared without capabilities
 final workflow:DurableAgent billingAgent = check new ({
     systemPrompt: {role: "Billing assistant", instructions: "Handle customer bills."},
