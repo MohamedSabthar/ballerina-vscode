@@ -189,7 +189,8 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
         // always through `check`, since `_` cannot take the error member. A declaration that cannot
         // be read keeps the binding: the compiler says which one it is, a silent discard would not.
         boolean oneWay = WorkflowUtil.agentEventDeclaresResponse(sourceBuilder.workspaceManager,
-                sourceBuilder.filePath, agent, WorkflowUtil.capabilityName(eventName)) == Boolean.FALSE;
+                sourceBuilder.filePath, agent, WorkflowUtil.capabilityName(eventName))
+                .map(declares -> !declares).orElse(false);
         if (oneWay) {
             sourceBuilder.token().name("_").whiteSpace().keyword(SyntaxKind.EQUAL_TOKEN)
                     .keyword(SyntaxKind.CHECK_KEYWORD);
