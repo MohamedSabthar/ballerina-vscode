@@ -22,6 +22,7 @@ import { test } from '@playwright/test';
 import * as helpers from './utils/helpers';
 import { extensionsFolder, newProjectPath, zipProjectSnapshot } from './utils/helpers';
 import { downloadExtensionFromMarketplace } from '@wso2/playwright-vscode-tester';
+import { descendantPids, killProcessTree } from './utils/helpers/processTree';
 import fs from 'fs';
 import path from 'path';
 const videosFolder = path.join(__dirname, '..', 'test-resources', 'videos');
@@ -361,6 +362,11 @@ test.afterAll(async () => {
         try {
             const electronProcess = helpers.vscode.process?.();
             if (electronProcess && !electronProcess.killed) {
+                // SIGKILL reaches Electron alone: the language server the extension host spawned
+                // keeps running on its stdio until the job ends, one JVM per VS Code launch (19 were
+                // still alive at the end of a group 5 job). Enough of them starve the runner and
+                // the job ends with "The runner has received a shutdown signal".
+                const children = descendantPids(electronProcess.pid);
                 await new Promise<void>((resolve) => {
                     let settled = false;
                     const done = () => {
@@ -378,7 +384,8 @@ test.afterAll(async () => {
                         done();
                     }
                 });
-                console.log('✅ VS Code Electron app terminated');
+                const killed = killProcessTree(electronProcess.pid, children);
+                console.log(`✅ VS Code Electron app terminated (${killed} of its ${children.length} child processes killed with it)`);
             } else {
                 console.log('ℹ️  No live Electron process to terminate');
             }
