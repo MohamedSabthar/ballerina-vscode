@@ -77,6 +77,16 @@ async function fillExpression(webview: Frame, key: string, value: string): Promi
     await page.page.waitForTimeout(800);
 }
 
+// Clicks one of the agent box's add-affordances. They are drawn only while the canvas is not read-only,
+// and the canvas is read-only while the side panel is open: after a capability save the panel keeps its
+// loader up until the refreshed model has rendered, so a click that follows a save too soon finds nothing.
+async function clickAffordance(webview: Frame, kind: 'event' | 'humanTask'): Promise<void> {
+    await webview.getByTestId('side-panel').waitFor({ state: 'hidden', timeout: 60000 }).catch(() => undefined);
+    const affordance = webview.getByTestId(`durable-agent-affordance-${kind}`).first();
+    await affordance.waitFor({ state: 'visible', timeout: 60000 });
+    await affordance.click({ force: true });
+}
+
 async function saveForm(panel: Locator, frame?: Frame): Promise<void> {
     const saveButton = panel.getByRole('button', { name: 'Save' }).first();
     await saveButton.waitFor({ state: 'visible', timeout: 60000 });
@@ -129,7 +139,7 @@ export default function createTests() {
             await openFromOverview(webview, 'billingAgent', webview.getByTestId('durable-agent-run-node'));
 
             logStep('Register a one-way SINGLE_EVENT channel named bill');
-            await webview.getByTestId('durable-agent-affordance-event').first().click({ force: true });
+            await clickAffordance(webview, 'event');
             const panel = webview.getByTestId('side-panel');
             await fillTextField(panel, 'Event Name', 'bill');
             await fillUnderLabel(panel, 'Request Type', 'json', webview);
@@ -142,7 +152,7 @@ export default function createTests() {
             expect(mainSource()).not.toMatch(/events:\s*\[/);
 
             logStep('Register a second channel, chat, with a response: the map gains a key');
-            await webview.getByTestId('durable-agent-affordance-event').first().click({ force: true });
+            await clickAffordance(webview, 'event');
             await fillTextField(panel, 'Event Name', 'chat');
             await fillUnderLabel(panel, 'Request Type', 'string', webview);
             await fillUnderLabel(panel, 'Response Type', 'string', webview);
@@ -159,7 +169,7 @@ export default function createTests() {
             await webview.getByTestId('durable-agent-run-node').waitFor({ state: 'visible', timeout: 60000 });
 
             logStep('Register managerApproval for the MANAGER role');
-            await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
+            await clickAffordance(webview, 'humanTask');
             const panel = webview.getByTestId('side-panel');
             await fillTextField(panel, 'Task Name', 'managerApproval');
             await switchToExpression(panel, 'userRoles');
@@ -174,7 +184,7 @@ export default function createTests() {
             await webview.getByTestId('durable-agent-run-node').waitFor({ state: 'visible', timeout: 60000 });
 
             logStep('Register managerApproval for a named user');
-            await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
+            await clickAffordance(webview, 'humanTask');
             const panel = webview.getByTestId('side-panel');
             await fillTextField(panel, 'Task Name', 'managerApproval');
             await expandAdvanced(panel);
@@ -191,7 +201,7 @@ export default function createTests() {
             await webview.getByTestId('durable-agent-run-node').waitFor({ state: 'visible', timeout: 60000 });
 
             logStep('Register financeApproval for a named user with a completion type');
-            await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
+            await clickAffordance(webview, 'humanTask');
             const panel = webview.getByTestId('side-panel');
             await fillTextField(panel, 'Task Name', 'financeApproval');
             await expandAdvanced(panel);
