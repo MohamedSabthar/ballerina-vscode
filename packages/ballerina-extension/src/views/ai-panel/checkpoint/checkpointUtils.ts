@@ -16,19 +16,15 @@
  * under the License.
  */
 
-import * as vscode from 'vscode';
+import * as path from 'path';
 import { Checkpoint } from '@wso2/ballerina-core/lib/state-machine-types';
-import { CheckpointService, getCheckpointService } from './checkpointService';
+import { getCheckpointService } from './checkpointService';
+import { CheckpointContentUnavailableError, CheckpointUnknownFormatError } from './types';
 
 export { renderDatamapper } from './restoreApplier';
 
-// Inline, so the commands built on these keep producing the checkpoints they always did.
-function legacyService(): CheckpointService {
-    return getCheckpointService(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '', 'inline');
-}
-
-export async function captureWorkspaceSnapshot(messageId: string): Promise<Checkpoint | null> {
-    return legacyService().capture(messageId);
+export async function captureWorkspaceSnapshot(projectRootPath: string, messageId: string): Promise<Checkpoint | null> {
+    return getCheckpointService(projectRootPath).capture(messageId);
 }
 
 /**
@@ -37,6 +33,48 @@ export async function captureWorkspaceSnapshot(messageId: string): Promise<Check
  * undone) must gate that on the return value, since a failed {@code applyEdit} is reported to the
  * user here but not thrown.
  */
-export async function restoreWorkspaceSnapshot(checkpoint: Checkpoint, skipArtifactWait = false): Promise<boolean> {
-    return legacyService().restore(checkpoint, { skipArtifactWait });
+export async function restoreWorkspaceSnapshot(
+    projectRootPath: string, checkpoint: Checkpoint, skipArtifactWait = false
+): Promise<boolean> {
+    return getCheckpointService(projectRootPath).restore(checkpoint, { skipArtifactWait });
+}
+
+export type DiffOriginal =
+    | { kind: 'content'; content: string }
+    | { kind: 'unavailable'; message: string }
+    | { kind: 'newerFormat' };
+
+const UNAVAILABLE_ORIGINAL_MESSAGES = {
+    tooLarge: 'This file is too large to be included in the checkpoint, so there is no earlier version to compare.',
+    unreadable: 'This file could not be read when the checkpoint was taken, so there is no earlier version to compare.',
+    missing: 'The earlier version of this file is missing from the checkpoint, so it cannot be compared.',
+};
+
+export async function readDiffOriginal(
+    projectRootPath: string, checkpoint: Checkpoint | undefined, relativePath: string
+): Promise<DiffOriginal> {
+    if (!checkpoint) {
+        return { kind: 'content', content: '' };
+    }
+    let originals;
+    try {
+        originals = await getCheckpointService(projectRootPath).readOriginals(checkpoint, [relativePath]);
+    } catch (error) {
+        if (error instanceof CheckpointUnknownFormatError) {
+            return { kind: 'newerFormat' };
+        }
+        if (error instanceof CheckpointContentUnavailableError) {
+            console.error(`[Checkpoint] Cannot read the original of ${relativePath}: ${error.message}`);
+            return { kind: 'unavailable', message: UNAVAILABLE_ORIGINAL_MESSAGES.missing };
+        }
+        throw error;
+    }
+    const original = originals.get(relativePath.split(path.sep).join('/'));
+    if (original?.state === 'content') {
+        return { kind: 'content', content: original.bytes.toString('utf8') };
+    }
+    if (original?.state === 'unavailable') {
+        return { kind: 'unavailable', message: UNAVAILABLE_ORIGINAL_MESSAGES[original.reason] };
+    }
+    return { kind: 'content', content: '' };
 }

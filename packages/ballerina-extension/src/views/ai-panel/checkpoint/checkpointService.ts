@@ -37,6 +37,7 @@ import {
     CheckpointContentUnavailableError,
     CheckpointNotifier,
     CheckpointTooLargeError,
+    CheckpointUnknownFormatError,
     OriginalContent,
     RestorePlan,
     ScannedFile,
@@ -195,8 +196,7 @@ export class CheckpointService {
     async readOriginals(cp: Checkpoint, paths: string[]): Promise<Map<string, OriginalContent>> {
         const backend = this.backendFor(cp);
         if (!backend) {
-            this.deps.notify.unknownFormat();
-            throw new CheckpointContentUnavailableError('Checkpoint was made by a newer version');
+            throw new CheckpointUnknownFormatError();
         }
         const resolved = await backend.resolve(cp, paths.map(toPosix));
         return new Map([...resolved].map(([p, content]) => [toPosix(p), content]));

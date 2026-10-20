@@ -238,9 +238,6 @@ function fromPersistedThread(pt: StoredThread): ChatThread {
     };
 }
 
-// workspaceRoot rides along unchecked by PersistedCheckpoint, which the shared library owns:
-// saveCheckpoint spreads what it is handed and migrateCheckpoint returns the parsed object as-is,
-// so the field survives the round trip without the shared type having to know about it.
 function toPersistedCheckpoint(checkpoint: Checkpoint): Omit<PersistedCheckpoint, 'schemaVersion'> {
     return {
         id: checkpoint.id,
@@ -252,7 +249,7 @@ function toPersistedCheckpoint(checkpoint: Checkpoint): Omit<PersistedCheckpoint
         workspaceSnapshot: checkpoint.workspaceSnapshot,
         workspaceRoot: checkpoint.workspaceRoot,
         ignorePatterns: checkpoint.ignorePatterns,
-    } as Omit<PersistedCheckpoint, 'schemaVersion'>;
+    };
 }
 
 function fromPersistedCheckpoint(pc: PersistedCheckpoint): Checkpoint {
@@ -265,8 +262,8 @@ function fromPersistedCheckpoint(pc: PersistedCheckpoint): Checkpoint {
         workspaceSnapshot: pc.workspaceSnapshot,
         storage: pc.storage,
         schemaVersion: pc.schemaVersion,
-        workspaceRoot: (pc as { workspaceRoot?: string }).workspaceRoot,
-        ignorePatterns: (pc as { ignorePatterns?: string[] }).ignorePatterns,
+        workspaceRoot: pc.workspaceRoot,
+        ignorePatterns: pc.ignorePatterns,
     };
 }
 
@@ -772,10 +769,12 @@ export class ChatStateStorage {
     ): Promise<void> {
         try {
             // Dynamic import to avoid circular dependencies
-            const { captureWorkspaceSnapshot } = await import('../../views/ai-panel/checkpoint/checkpointUtils');
+            const { getCheckpointService } = await import('../../views/ai-panel/checkpoint/checkpointService');
             const { notifyCheckpointCaptured } = await import('../../RPCLayer');
 
-            const checkpoint = await captureWorkspaceSnapshot(generationId);
+            const checkpoint = await getCheckpointService(projectRootPath).capture(generationId, {
+                previous: this.newestContentStoreCheckpoint(projectRootPath),
+            });
 
             if (checkpoint) {
                 await this.addCheckpointToGeneration(projectRootPath, threadId, generationId, checkpoint);
@@ -788,6 +787,19 @@ export class ChatStateStorage {
         } catch (error) {
             console.error('[ChatStateStorage] Failed to capture checkpoint:', error);
         }
+    }
+
+    private newestContentStoreCheckpoint(projectRootPath: string): Checkpoint | undefined {
+        let newest: Checkpoint | undefined;
+        for (const thread of this.storage.get(projectRootPath)?.threads.values() ?? []) {
+            for (const generation of thread.generations) {
+                const checkpoint = generation.checkpoint;
+                if (checkpoint?.storage?.kind === 'content-store' && (!newest || checkpoint.timestamp > newest.timestamp)) {
+                    newest = checkpoint;
+                }
+            }
+        }
+        return newest;
     }
 
     /**

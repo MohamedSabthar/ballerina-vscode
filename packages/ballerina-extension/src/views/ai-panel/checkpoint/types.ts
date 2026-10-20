@@ -93,6 +93,13 @@ export class CheckpointContentUnavailableError extends Error {
     }
 }
 
+export class CheckpointUnknownFormatError extends Error {
+    constructor(message = 'Checkpoint was made by a newer version') {
+        super(message);
+        this.name = 'CheckpointUnknownFormatError';
+    }
+}
+
 export class CheckpointBlobCorruptError extends Error {
     constructor(message = 'Checkpoint blob is corrupt') {
         super(message);
