@@ -43,7 +43,7 @@ function fieldByLabel(scope: Locator, label: string): Locator {
     return scope.getByRole('textbox', { name: accessible }).or(controlUnder(scope, label)).first();
 }
 
-export async function fillUnderLabel(scope: Locator, label: string, value: string): Promise<void> {
+export async function fillUnderLabel(scope: Locator, label: string, value: string, frame?: Frame): Promise<void> {
     let input = fieldByLabel(scope, label);
     await input.waitFor({ state: 'visible', timeout: 30000 });
     const kind = await input.evaluate((e) => (e.classList.contains('cm-content') || e.closest('.cm-editor') ? 'cm' : e.tagName.toLowerCase()));
@@ -69,14 +69,15 @@ export async function fillUnderLabel(scope: Locator, label: string, value: strin
         await expect.poll(() => input.inputValue(), { timeout: 10000 }).toBe(value);
     }
     await page.page.waitForTimeout(400);
-    await dismissTypeHelper(scope);
+    await dismissTypeHelper(scope, frame);
 }
 
 // The type helper popup stays open over the fields below it, and over Save when the field is the last one:
 // a click there lands in the popup, even a forced one. Escape closes it from the field; when it does not,
 // clicking the panel's own title takes the focus away, and the popup has to be gone before going on.
-export async function dismissTypeHelper(scope: Locator): Promise<void> {
-    const popup = scope.getByText('to cancel', { exact: false }).first();
+// The popup is rendered outside the panel, so it is looked for in the whole frame when one is given.
+export async function dismissTypeHelper(scope: Locator, frame?: Frame): Promise<void> {
+    const popup = (frame ?? scope).getByText('to cancel', { exact: false }).first();
     for (let attempt = 0; attempt < 3; attempt++) {
         if (!await popup.isVisible().catch(() => false)) {
             return;

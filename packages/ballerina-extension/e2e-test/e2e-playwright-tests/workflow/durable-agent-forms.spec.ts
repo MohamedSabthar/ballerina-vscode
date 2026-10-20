@@ -64,7 +64,7 @@ async function fillExpression(webview: Frame, key: string, value: string): Promi
     await page.page.waitForTimeout(800);
 }
 
-async function saveForm(panel: Locator): Promise<void> {
+async function saveForm(panel: Locator, frame?: Frame): Promise<void> {
     const saveButton = panel.getByRole('button', { name: 'Save' }).first();
     await saveButton.waitFor({ state: 'visible', timeout: 60000 });
     const enabled = await expect.poll(() => saveButton.getAttribute('disabled'), { timeout: 30000 }).toBeNull()
@@ -74,8 +74,11 @@ async function saveForm(panel: Locator): Promise<void> {
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
         throw new Error(`Save stayed disabled; the panel shows: ${shown}`);
     }
-    await dismissTypeHelper(panel);
-    await saveButton.click({ force: true });
+    await dismissTypeHelper(panel, frame);
+    // Not forced: a click Playwright refuses names the element covering Save, where a forced one
+    // would land in it without a word.
+    await saveButton.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => undefined);
+    await saveButton.click({ timeout: 15000 });
     // A save the LS or the form refuses leaves the panel open; its text says why, the timeout alone does not.
     await saveButton.waitFor({ state: 'hidden', timeout: 90000 }).catch(async (error) => {
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ');
@@ -114,9 +117,9 @@ export default function createTests() {
             await webview.getByTestId('durable-agent-affordance-event').first().click({ force: true });
             const panel = webview.getByTestId('side-panel');
             await fillTextField(panel, 'Event Name', 'bill');
-            await fillUnderLabel(panel, 'Request Type', 'json');
+            await fillUnderLabel(panel, 'Request Type', 'json', webview);
             await selectDropdown(panel, /Cardinality/, 'SINGLE_EVENT');
-            await saveForm(panel);
+            await saveForm(panel, webview);
             // The map form the module declares, keyed by the name — not a list of {name: ...} records.
             // A second entry is appended after a newline and a comma on its own line, hence `\}\s*,`.
             await expect.poll(mainSource, { timeout: 90000 })
@@ -126,9 +129,9 @@ export default function createTests() {
             logStep('Register a second channel, chat, with a response: the map gains a key');
             await webview.getByTestId('durable-agent-affordance-event').first().click({ force: true });
             await fillTextField(panel, 'Event Name', 'chat');
-            await fillUnderLabel(panel, 'Request Type', 'string');
-            await fillUnderLabel(panel, 'Response Type', 'string');
-            await saveForm(panel);
+            await fillUnderLabel(panel, 'Request Type', 'string', webview);
+            await fillUnderLabel(panel, 'Response Type', 'string', webview);
+            await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/events:\s*\{\s*bill:\s*\{[^}]*\}\s*,\s*chat:\s*\{request:\s*string,\s*response:\s*string\}\s*\}/);
         });
@@ -146,7 +149,7 @@ export default function createTests() {
             await expandAdvanced(panel);
             await switchToExpression(panel, 'users');
             await fillExpression(webview, 'users', '"alice"');
-            await saveForm(panel);
+            await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{userRoles:\s*\(\),\s*users:\s*"alice"\}\s*\}/);
             expect(mainSource()).not.toMatch(/humanTasks:\s*\[/);
@@ -163,8 +166,8 @@ export default function createTests() {
             await expandAdvanced(panel);
             await switchToExpression(panel, 'users');
             await fillExpression(webview, 'users', '"bob"');
-            await fillUnderLabel(panel, 'Completion Type', 'BillDetails');
-            await saveForm(panel);
+            await fillUnderLabel(panel, 'Completion Type', 'BillDetails', webview);
+            await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\}\s*,\s*financeApproval:\s*\{userRoles:\s*\(\),\s*users:\s*"bob",\s*resultType:\s*BillDetails\}\s*\}/);
         });
@@ -183,7 +186,7 @@ export default function createTests() {
             await fillExEditor(webview, 'agentId', 'workflowId');
             await selectDropdown(panel, /Data Event/, 'bill');
             await fillExEditor(webview, 'data', 'payload');
-            await saveForm(panel);
+            await saveForm(panel, webview);
             // No token binding: the compiler plugin rejects one on a one-way channel.
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/_ = check supportAgent\.sendData\(workflowId, "bill", payload\);/);
@@ -195,7 +198,7 @@ export default function createTests() {
             await fillExEditor(webview, 'agentId', 'workflowId');
             await selectDropdown(panel, /Data Event/, 'chat');
             await fillExEditor(webview, 'data', '"hello"');
-            await saveForm(panel);
+            await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/string eventToken = check supportAgent\.sendData\(workflowId, "chat", "hello"\);/);
         });
@@ -221,8 +224,8 @@ export default function createTests() {
             await result.waitFor({ timeout: 60000 });
             await result.fill('details');
             await result.press('Tab');
-            await fillUnderLabel(panel, 'Expected Type', 'BillDetails');
-            await saveForm(panel);
+            await fillUnderLabel(panel, 'Expected Type', 'BillDetails', webview);
+            await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/BillDetails details = check wso2ModelProvider->generate\(/);
         });
@@ -250,7 +253,7 @@ export default function createTests() {
             await idResult.waitFor({ timeout: 60000 });
             await idResult.fill('receiptId');
             await idResult.press('Tab');
-            await saveForm(panel);
+            await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 }).toMatch(/receiptId = check fetchReceiptId\(fileUrl\);/);
 
             logStep('Right after, add Generate below the call, with BillDetails as the expected type');
@@ -268,8 +271,8 @@ export default function createTests() {
             await result.waitFor({ timeout: 60000 });
             await result.fill('details');
             await result.press('Tab');
-            await fillUnderLabel(panel, 'Expected Type', 'BillDetails');
-            await saveForm(panel);
+            await fillUnderLabel(panel, 'Expected Type', 'BillDetails', webview);
+            await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/fetchReceiptId\(fileUrl\);\s*BillDetails details = check wso2ModelProvider->generate\(/);
         });
