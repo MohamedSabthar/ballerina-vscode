@@ -263,7 +263,13 @@ function ensureMacElectronSymlink(): void {
 const processesSeenUnderVSCode = new Set<number>();
 
 function processesUnderVSCode(): number[] {
-    const pid = vscode?.process?.()?.pid;
+    // process() throws once the app is gone (Playwright reads a field of a closed connection).
+    let pid: number | undefined;
+    try {
+        pid = vscode?.process?.()?.pid;
+    } catch {
+        pid = undefined;
+    }
     return pid ? descendantPids(pid) : [];
 }
 

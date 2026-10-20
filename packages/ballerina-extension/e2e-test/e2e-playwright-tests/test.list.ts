@@ -360,7 +360,13 @@ test.afterAll(async () => {
     if (helpers.vscode) {
         console.log('🛑 Terminating VS Code Electron app...');
         try {
-            const electronProcess = helpers.vscode.process?.();
+            // process() throws once the app has already gone; the reap below still has to run then.
+            let electronProcess: ReturnType<typeof helpers.vscode.process> | undefined;
+            try {
+                electronProcess = helpers.vscode.process?.();
+            } catch {
+                electronProcess = undefined;
+            }
             if (electronProcess && !electronProcess.killed) {
                 // SIGKILL reaches Electron alone: the language server the extension host spawned
                 // keeps running on its stdio until the job ends, one JVM per VS Code launch (19 were
@@ -387,7 +393,9 @@ test.afterAll(async () => {
                 const killed = killProcessTree(electronProcess.pid, children) + helpers.reapAllProcessesSeenUnderVSCode();
                 console.log(`✅ VS Code Electron app terminated (${killed} processes it or its reloads had spawned killed with it)`);
             } else {
-                console.log('ℹ️  No live Electron process to terminate');
+                // The app is gone, but the language servers its reloads left behind are not.
+                const killed = helpers.reapAllProcessesSeenUnderVSCode();
+                console.log(`ℹ️  No live Electron process to terminate (${killed} processes its reloads had spawned killed)`);
             }
         } catch (err) {
             console.warn(`⚠️  Failed to terminate Electron: ${(err as Error).message}`);
