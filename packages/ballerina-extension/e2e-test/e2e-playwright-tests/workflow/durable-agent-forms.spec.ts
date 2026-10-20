@@ -334,7 +334,9 @@ export default function createTests() {
             await fillUnderLabel(panel, 'Expected Type', 'BillDetails', webview);
             await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
-                .toMatch(/fetchReceiptId\(fileUrl\);\s*BillDetails details = check wso2ModelProvider->generate\(/);
+                .toMatch(/BillDetails details = check wso2ModelProvider->generate\(`Read the receipt`\);/);
+            // The earlier call stays: the Generate node is added below Start, so it sits above the call.
+            expect(mainSource()).toMatch(/string receiptId = check fetchReceiptId\("fileUrl"\);/);
         });
     });
 }
