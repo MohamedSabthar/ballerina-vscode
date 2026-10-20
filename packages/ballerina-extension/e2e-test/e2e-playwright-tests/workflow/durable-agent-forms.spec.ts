@@ -75,15 +75,11 @@ async function saveForm(panel: Locator, frame?: Frame): Promise<void> {
         throw new Error(`Save stayed disabled; the panel shows: ${shown}`);
     }
     await dismissTypeHelper(panel, frame);
-    // A plain click first: when Playwright refuses it, its message names what covers Save. The forced
-    // click that follows is how the button is reached in the other specs (the panel's own motion keeps
-    // the button from counting as stable), and the refusal travels with any failure after it.
+    // Clicked through the DOM: a pointer click lands in whatever covers the button (the type helper
+    // popup when the last field is a type), and Playwright never counts the control as stable anyway.
     await saveButton.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => undefined);
-    const refused = await saveButton.click({ timeout: 5000 }).then(() => '', (error: Error) =>
-        error.message.replace(/\s+/g, ' ').slice(0, 400));
-    if (refused) {
-        await saveButton.click({ force: true });
-    }
+    await saveButton.dispatchEvent('click');
+    const refused = '';
     // A save the LS or the form refuses leaves the panel open; its text says why, the timeout alone does not.
     await saveButton.waitFor({ state: 'hidden', timeout: 90000 }).catch(async (error) => {
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ');

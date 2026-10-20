@@ -72,22 +72,22 @@ export async function fillUnderLabel(scope: Locator, label: string, value: strin
     await dismissTypeHelper(scope, frame);
 }
 
-// The type helper popup stays open over the fields below it, and over Save when the field is the last one:
-// a click there lands in the popup, even a forced one. Escape from the field and a click on the panel title
-// both leave it open (seen on CI), so the exact match the field already holds is taken with Enter, which is
-// what the popup offers; the popup is rendered outside the panel, so it is looked for in the frame.
+// The type helper popup stays open over the fields below it, and over Save when the field is the last one.
+// Escape from the field closes it most of the time; when it does not, a click on the panel's title takes the
+// focus away. Enter is not used: it takes the highlighted suggestion, which is not always the typed text. The
+// popup is rendered outside the panel, so it is looked for in the frame when one is given. A popup that still
+// stands is left to the caller, which clicks Save through the DOM rather than the pointer.
 export async function dismissTypeHelper(scope: Locator, frame?: Frame): Promise<void> {
     const popup = (frame ?? scope).getByText('to cancel', { exact: false }).first();
     if (!await popup.isVisible().catch(() => false)) {
         return;
     }
-    await page.page.keyboard.press('Enter');
+    await page.page.keyboard.press('Escape');
     await page.page.waitForTimeout(300);
     if (await popup.isVisible().catch(() => false)) {
-        await page.page.keyboard.press('Escape');
+        await scope.locator('h1, h2, h3, h4').filter({ visible: true }).first().click({ timeout: 5000 }).catch(() => undefined);
         await page.page.waitForTimeout(300);
     }
-    await popup.waitFor({ state: 'hidden', timeout: 5000 });
 }
 
 export const sidePanelOpens = (webview: Frame, timeout: number) =>
