@@ -36,3 +36,13 @@ final workflow:DurableAgent emptyAgent = check new ({
     events: [],
     humanTasks: []
 });
+
+# A listed event that carries a comment: the designer cannot rewrite it without losing the comment.
+final workflow:DurableAgent commentedAgent = check new ({
+    systemPrompt: {role: "Notes", instructions: "Keep notes."},
+    model: keyedModel,
+    events: [
+        {name: "note", request: json // the note body
+        }
+    ]
+});

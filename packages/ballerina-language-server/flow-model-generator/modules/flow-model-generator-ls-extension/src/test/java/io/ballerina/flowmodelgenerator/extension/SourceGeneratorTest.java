@@ -226,7 +226,12 @@ public class SourceGeneratorTest extends AbstractLSTest {
                 {"durable_agent_register_event_interpolated_name_to_source.json",
                         "A capability name must be a constant: 'string `order-${id}`' interpolates a value"},
                 {"durable_agent_register_event_keyed_rename_duplicate_to_source.json",
-                        "The durable agent 'keyedAgent' already declares 'bill' in 'events'"}
+                        "The durable agent 'keyedAgent' already declares 'bill' in 'events'"},
+                {"durable_agent_register_event_list_commented_to_source.json",
+                        "The durable agent's 'events' is written as a list, which ballerina/workflow 0.9.0 and later "
+                                + "do not accept, and the designer cannot rewrite its entry "
+                                + "'{name: \"note\", request: json // the note body }': declare the field as a "
+                                + "mapping keyed by name and try again"}
         };
     }
 
@@ -282,6 +287,7 @@ public class SourceGeneratorTest extends AbstractLSTest {
                 "durable_agent_register_event_keyed_duplicate_to_source.json",
                 "durable_agent_register_event_interpolated_name_to_source.json",
                 "durable_agent_register_event_keyed_rename_duplicate_to_source.json",
+                "durable_agent_register_event_list_commented_to_source.json",
                 // The following nodes are deprecated
                 "data_mapper1.json",
                 "data_mapper2.json",

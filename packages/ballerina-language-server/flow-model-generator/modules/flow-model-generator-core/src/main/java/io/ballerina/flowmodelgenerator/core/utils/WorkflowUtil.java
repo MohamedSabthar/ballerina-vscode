@@ -48,12 +48,14 @@ import io.ballerina.compiler.syntax.tree.ModuleMemberDeclarationNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
+import io.ballerina.compiler.syntax.tree.NonTerminalNode;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxInfo;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.SyntaxTree;
+import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.flowmodelgenerator.core.Constants;
 import io.ballerina.flowmodelgenerator.core.UserFacingException;
 import io.ballerina.flowmodelgenerator.core.model.FormBuilder;
@@ -1138,12 +1140,14 @@ public class WorkflowUtil {
     }
 
     // A list item `{name: "x", fields}` as the keyed entry `x: {fields}`. Only an inline record with a
-    // literal name converts: anything else the designer cannot rewrite, so it says what to change.
+    // literal name and no comment converts: a comment would be dropped or swallow the closing brace,
+    // and anything else the designer cannot rewrite, so it says what to change.
     private static String keyedCapabilityEntry(Node item, String fieldName) {
         String refusal = "The durable agent's '" + fieldName + "' is written as a list, which ballerina/workflow "
                 + KEYED_CAPABILITIES_SINCE + " and later do not accept, and the designer cannot rewrite its entry "
-                + "'" + item.toSourceCode().trim() + "': declare the field as a mapping keyed by name and try again";
-        if (!(item instanceof MappingConstructorExpressionNode config)) {
+                + "'" + item.toSourceCode().replaceAll("\\s+", " ").trim()
+                + "': declare the field as a mapping keyed by name and try again";
+        if (!(item instanceof MappingConstructorExpressionNode config) || carriesComment(item)) {
             throw new UserFacingException(refusal);
         }
         String key = null;
@@ -1157,13 +1161,57 @@ public class WorkflowUtil {
                 }
                 key = capabilityKeyLiteral(literal);
             } else {
-                rest.add(field.toSourceCode().trim());
+                rest.add(compactSource(field));
             }
         }
         if (key == null) {
             throw new UserFacingException(refusal);
         }
         return key + ": {" + String.join(", ", rest) + "}";
+    }
+
+    // The node's source from its tokens alone: line breaks and runs of whitespace become one space,
+    // so the text can sit inside a one-line entry. Comments are the caller's to refuse first.
+    private static String compactSource(Node node) {
+        StringBuilder text = new StringBuilder();
+        appendTokens(node, text);
+        return text.toString().replaceAll("\\s+", " ").trim();
+    }
+
+    private static void appendTokens(Node node, StringBuilder text) {
+        if (node instanceof Token token) {
+            text.append(' ').append(token.text()).append(' ');
+            return;
+        }
+        if (node instanceof NonTerminalNode parent) {
+            for (Node child : parent.children()) {
+                appendTokens(child, text);
+            }
+        }
+    }
+
+    private static boolean carriesComment(Node node) {
+        if (node instanceof Token token) {
+            for (Minutiae minutiae : token.leadingMinutiae()) {
+                if (minutiae.kind() == SyntaxKind.COMMENT_MINUTIAE) {
+                    return true;
+                }
+            }
+            for (Minutiae minutiae : token.trailingMinutiae()) {
+                if (minutiae.kind() == SyntaxKind.COMMENT_MINUTIAE) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (node instanceof NonTerminalNode parent) {
+            for (Node child : parent.children()) {
+                if (carriesComment(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
