@@ -242,7 +242,8 @@ public class SourceGeneratorTest extends AbstractLSTest {
                                 + "'{name: EVENT_NAME, request: json}': declare the field as a mapping keyed by name "
                                 + "and try again"},
                 {"durable_agent_register_event_list_stale_edit_to_source.json",
-                        "The durable agent's 'events' changed since the form was opened: reopen the entry and try again"}
+                        "The durable agent's 'events' changed since the form was opened: reopen the entry and try "
+                                + "again"}
         };
     }
 
