@@ -633,6 +633,9 @@ export function initTest(newProject: boolean = true, skipProjectCreation: boolea
     });
 
     test.afterEach(async ({ }, testInfo) => {
+        // Remembered now, while Electron is still there to be asked: when the app is gone by the
+        // teardown, the language server it had spawned is still running and would be missed.
+        processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
         const status = testInfo.status ?? 'skipped';
         lastTestFailed = status === 'failed' || status === 'timedOut' || status === 'interrupted';
         const statusEmoji = status === 'passed' ? '✅' : status === 'failed' ? '❌' : '⏭️';
@@ -689,6 +692,9 @@ export function initMigrationTest() {
     });
 
     test.afterEach(async ({ }, testInfo) => {
+        // Remembered now, while Electron is still there to be asked: when the app is gone by the
+        // teardown, the language server it had spawned is still running and would be missed.
+        processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
         const status = testInfo.status ?? 'skipped';
         lastTestFailed = status === 'failed' || status === 'timedOut' || status === 'interrupted';
         const statusEmoji = status === 'passed' ? '✅' : status === 'failed' ? '❌' : '⏭️';
