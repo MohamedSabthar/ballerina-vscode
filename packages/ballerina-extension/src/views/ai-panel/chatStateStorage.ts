@@ -29,6 +29,7 @@ import { approvalManager } from '../../features/ai/state/ApprovalManager';
 import { cleanupTempProject } from '../../features/ai/utils/project/temp-project';
 import { generateId } from './idGenerators';
 import { resolveWorkspaceIdentity } from './workspaceIdentity';
+import { blobStoreDir, FsBlobStore } from './checkpoint/blobStore';
 import {
     CopilotPersistenceStore,
     PersistedThread,
@@ -48,6 +49,12 @@ type StoredGeneration = PersistedGeneration & { consoleSummary?: string };
 type StoredThread = PersistedThread & { consoleOrigin?: boolean };
 
 const THREAD_NAME_MAX_LENGTH = 60;
+const CHECKPOINT_GC_DEBOUNCE_MS = 5000;
+const CHECKPOINT_GC_MIN_AGE_MS = 60 * 60 * 1000;
+
+export interface ChatStateStorageOptions {
+    checkpointGc?: { debounceMs?: number; minAgeMs?: number };
+}
 const UNNAMED_THREAD_NAME = 'New Chat';
 
 /** The label auto-naming would give this thread — its first prompt, or the unnamed sentinel. */
@@ -294,10 +301,17 @@ export class ChatStateStorage {
 
     private generationStatusObservers: Set<GenerationStatusObserver> = new Set();
 
-    constructor() {
+    private readonly checkpointGcDebounceMs: number;
+    private readonly checkpointGcMinAgeMs: number;
+    private checkpointGcTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+    private checkpointGcRuns: Map<string, Promise<void>> = new Map();
+
+    constructor(options: ChatStateStorageOptions = {}) {
         this.persistenceStore = new CopilotPersistenceStore({
             workspaceIdResolver: resolveWorkspaceIdentity,
         });
+        this.checkpointGcDebounceMs = options.checkpointGc?.debounceMs ?? CHECKPOINT_GC_DEBOUNCE_MS;
+        this.checkpointGcMinAgeMs = options.checkpointGc?.minAgeMs ?? CHECKPOINT_GC_MIN_AGE_MS;
     }
 
     // ============================================
@@ -653,6 +667,7 @@ export class ChatStateStorage {
 
         workspace.threads.delete(threadId);
         this.persistenceStore.deleteThread(projectRootPath, threadId);
+        this.scheduleCheckpointGc(projectRootPath);
 
         if (workspace.activeThreadId === threadId) {
             // Pick the newest remaining thread, or create a fresh one
@@ -802,6 +817,68 @@ export class ChatStateStorage {
         return newest;
     }
 
+    private scheduleCheckpointGc(projectRootPath: string): void {
+        clearTimeout(this.checkpointGcTimers.get(projectRootPath));
+        const timer = setTimeout(() => {
+            this.checkpointGcTimers.delete(projectRootPath);
+            this.startCheckpointGc(projectRootPath);
+        }, this.checkpointGcDebounceMs);
+        timer.unref?.();
+        this.checkpointGcTimers.set(projectRootPath, timer);
+    }
+
+    /** Runs a scheduled checkpoint GC now instead of after its debounce, and waits for it. */
+    async flushCheckpointGc(projectRootPath: string): Promise<void> {
+        const timer = this.checkpointGcTimers.get(projectRootPath);
+        if (timer !== undefined) {
+            clearTimeout(timer);
+            this.checkpointGcTimers.delete(projectRootPath);
+            this.startCheckpointGc(projectRootPath);
+        }
+        await this.checkpointGcRuns.get(projectRootPath);
+    }
+
+    private startCheckpointGc(projectRootPath: string): void {
+        const previous = this.checkpointGcRuns.get(projectRootPath) ?? Promise.resolve();
+        const run = previous
+            .then(() => this.collectCheckpointGarbage(projectRootPath))
+            .catch(error => console.error('[ChatStateStorage] Checkpoint garbage collection failed:', error));
+        this.checkpointGcRuns.set(projectRootPath, run);
+        run.finally(() => {
+            if (this.checkpointGcRuns.get(projectRootPath) === run) {
+                this.checkpointGcRuns.delete(projectRootPath);
+            }
+        });
+    }
+
+    private async collectCheckpointGarbage(projectRootPath: string): Promise<void> {
+        await Promise.allSettled([...this.pendingCheckpointCaptures.values()]);
+        if (!new FsBlobStore(blobStoreDir(this.persistenceStore.getWorkspaceDir(projectRootPath))).exists()) {
+            return;
+        }
+        const live: Checkpoint[] = [];
+        for (const threadId of this.persistenceStore.listThreadIds(projectRootPath)) {
+            for (const generationId of this.persistenceStore.listCheckpoints(projectRootPath, threadId)) {
+                const persisted = await this.persistenceStore.loadCheckpointAsync(projectRootPath, threadId, generationId);
+                if (persisted) {
+                    live.push(fromPersistedCheckpoint(persisted));
+                } else if (this.persistenceStore.listCheckpoints(projectRootPath, threadId).includes(generationId)) {
+                    console.warn(`[ChatStateStorage] Skipping checkpoint garbage collection: checkpoint ${generationId} is unreadable`);
+                    return;
+                }
+            }
+        }
+        for (const thread of this.storage.get(projectRootPath)?.threads.values() ?? []) {
+            for (const generation of thread.generations) {
+                if (generation.checkpoint) {
+                    live.push(generation.checkpoint);
+                }
+            }
+        }
+        const { getCheckpointService } = await import('./checkpoint/checkpointService');
+        await getCheckpointService(projectRootPath).collectGarbage(live, { minAgeMs: this.checkpointGcMinAgeMs });
+    }
+
     /**
      * Update a generation
      * @param projectRootPath Workspace identifier
@@ -849,6 +926,7 @@ export class ChatStateStorage {
             this.flushThread(projectRootPath, threadId);
             // Also clean up checkpoint file if it exists
             this.persistenceStore.deleteCheckpoint(projectRootPath, threadId, generationId);
+            this.scheduleCheckpointGc(projectRootPath);
             console.log(`[ChatStateStorage] Removed generation: ${generationId}`);
         }
     }
@@ -1233,6 +1311,7 @@ export class ChatStateStorage {
         thread.updatedAt = Date.now();
         // Persist thread with updated checkpoint flags
         this.flushThread(projectRootPath, threadId);
+        this.scheduleCheckpointGc(projectRootPath);
     }
 
     /**
@@ -1291,6 +1370,7 @@ export class ChatStateStorage {
         for (let i = checkpointGenerationIndex; i < thread.generations.length; i++) {
             this.persistenceStore.deleteCheckpoint(projectRootPath, threadId, thread.generations[i].id);
         }
+        this.scheduleCheckpointGc(projectRootPath);
 
         // Truncate generations at the checkpoint
         // Remove the generation WITH the checkpoint and everything after it

@@ -54,7 +54,7 @@ export interface CheckpointBackend {
     restoreCandidates(cp: Checkpoint, current: ScannedFile[]): Promise<string[]>;
     resolve(cp: Checkpoint, paths: string[]): Promise<Map<string, ResolvedContent>>;
     references(cp: Checkpoint): Iterable<string>;
-    collectGarbage(live: ReadonlySet<string>): Promise<number>;
+    collectGarbage(live: ReadonlySet<string>, minAgeMs?: number): Promise<number>;
 }
 
 export interface BlobStore {

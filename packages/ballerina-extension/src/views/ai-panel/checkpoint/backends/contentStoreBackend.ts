@@ -130,8 +130,8 @@ export class ContentStoreBackend implements CheckpointBackend {
         return new Set(Object.values(cp.storage.files).filter(isHashEntry).map(entry => entry.hash));
     }
 
-    collectGarbage(live: ReadonlySet<string>): Promise<number> {
-        return this.store.sweep(live, GC_MIN_AGE_MS);
+    collectGarbage(live: ReadonlySet<string>, minAgeMs = GC_MIN_AGE_MS): Promise<number> {
+        return this.store.sweep(live, minAgeMs);
     }
 
     private async captureFile(file: ScannedFile, ctx: CaptureContext, limits: Limits): Promise<Stored> {

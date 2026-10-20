@@ -202,7 +202,7 @@ export class CheckpointService {
         return new Map([...resolved].map(([p, content]) => [toPosix(p), content]));
     }
 
-    async collectGarbage(live: Iterable<Checkpoint>): Promise<void> {
+    async collectGarbage(live: Iterable<Checkpoint>, opts: { minAgeMs?: number } = {}): Promise<void> {
         const referenced = new Set<string>();
         for (const cp of live) {
             const backend = this.backendFor(cp);
@@ -216,7 +216,7 @@ export class CheckpointService {
             }
         }
         for (const backend of this.backends.values()) {
-            await backend.collectGarbage(referenced);
+            await backend.collectGarbage(referenced, opts.minAgeMs);
         }
     }
 
