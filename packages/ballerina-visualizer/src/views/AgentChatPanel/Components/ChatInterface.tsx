@@ -545,7 +545,7 @@ export function preprocessLatex(text: string): string {
 function isValidChatEndpoint(value: string): boolean {
     try {
         const url = new URL(value.trim());
-        return (url.protocol === "http:" || url.protocol === "https:") && url.pathname.endsWith("/chat");
+        return (url.protocol === "http:" || url.protocol === "https:") && url.pathname.endsWith("/chat") && !/[?#]/.test(value);
     } catch {
         return false;
     }
@@ -711,7 +711,7 @@ const ChatInterface: React.FC = () => {
     };
 
     const endpointError = endpointDraft !== null && !isValidChatEndpoint(endpointDraft)
-        ? "Enter an http(s) URL that ends with /chat."
+        ? "Enter an http(s) URL that ends with /chat, without a query or fragment."
         : undefined;
 
     const handleSaveEndpoint = async () => {
