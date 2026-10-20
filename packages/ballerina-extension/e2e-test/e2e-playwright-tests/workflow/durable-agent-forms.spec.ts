@@ -44,11 +44,24 @@ async function backToOverview(): Promise<void> {
     await webview.getByText('billingAgent', { exact: true }).first().waitFor({ timeout: 90000 });
 }
 
-// Opens an artifact's diagram from the integration overview by its name.
+// Opens an artifact's diagram by its name: from the integration overview when it shows the name, else from
+// the project explorer tree, which lists every function and activity (the overview did not show
+// notifySupport within 90 seconds on CI after the agent had been edited).
 async function openFromOverview(webview: Frame, name: string, ready: Locator): Promise<void> {
     const card = webview.getByText(name, { exact: true }).first();
-    await card.waitFor({ timeout: 90000 });
-    await card.click({ force: true });
+    if (await card.waitFor({ timeout: 20000 }).then(() => true, () => false)) {
+        await card.click({ force: true });
+        if (await ready.waitFor({ state: 'visible', timeout: 30000 }).then(() => true, () => false)) {
+            return;
+        }
+    }
+    const projectExplorer = new ProjectExplorer(page.page);
+    await projectExplorer.init();
+    const row = await projectExplorer.findItemExpanding(name);
+    if (!row) {
+        throw new Error(`neither the overview nor the project tree shows '${name}'`);
+    }
+    await row.click();
     await ready.waitFor({ state: 'visible', timeout: 60000 });
 }
 
