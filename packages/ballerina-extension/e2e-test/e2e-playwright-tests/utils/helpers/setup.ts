@@ -21,7 +21,7 @@ import { test } from '@playwright/test';
 import fs, { existsSync } from 'fs';
 import path from 'path';
 import { execFileSync, execSync } from 'child_process';
-import { commandsOf, descendantPids, killProcessTree } from './processTree';
+import { descendants, killPids, ProcessEntry } from './processTree';
 import { getWebview } from './webview';
 import { BI_INTEGRATOR_LABEL, BI_WEBVIEW_NOT_FOUND_ERROR, DEFAULT_PROJECT_FOLDER_NAME, DEFAULT_PROJECT_NAME } from './constants';
 import { waitForBISidebarTreeView } from './sidebar';
@@ -260,9 +260,9 @@ function ensureMacElectronSymlink(): void {
 // to exit, so each reload leaves a JVM behind until the job ends (19 of them after a group 5 job).
 // Every process seen under Electron is remembered, and after a reload those no longer under it are
 // killed.
-const processesSeenUnderVSCode = new Set<number>();
+const processesSeenUnderVSCode = new Map<number, ProcessEntry>();
 
-function processesUnderVSCode(): number[] {
+function processesUnderVSCode(): ProcessEntry[] {
     // process() throws once the app is gone (Playwright reads a field of a closed connection).
     let pid: number | undefined;
     try {
@@ -270,30 +270,34 @@ function processesUnderVSCode(): number[] {
     } catch {
         pid = undefined;
     }
-    return pid ? descendantPids(pid) : [];
+    return pid ? descendants(pid) : [];
+}
+
+function rememberProcessesUnderVSCode(): void {
+    processesUnderVSCode().forEach((entry) => processesSeenUnderVSCode.set(entry.pid, entry));
 }
 
 function reapProcessesLeftBehind(): void {
-    const stillUnder = new Set(processesUnderVSCode());
-    const stale = [...processesSeenUnderVSCode].filter((pid) => !stillUnder.has(pid));
-    stale.forEach((pid) => processesSeenUnderVSCode.delete(pid));
-    const commands = commandsOf(stale);
-    const killed = killProcessTree(-1, stale);
+    const stillUnder = new Set(processesUnderVSCode().map((entry) => entry.pid));
+    const stale = [...processesSeenUnderVSCode.values()].filter((entry) => !stillUnder.has(entry.pid));
+    stale.forEach((entry) => processesSeenUnderVSCode.delete(entry.pid));
+    const killed = killPids(stale);
     if (killed > 0) {
-        console.log(`  🧹 Killed ${killed} processes the previous extension host left behind: ${commands.join('; ')}`);
+        console.log(`  🧹 Killed ${killed} processes the previous extension host left behind: `
+            + stale.map((entry) => `${entry.pid} ${entry.command}`).join('; '));
     }
 }
 
 // At suite teardown nothing seen under Electron should outlive it, reparented or not.
 export function reapAllProcessesSeenUnderVSCode(): number {
-    processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
-    const killed = killProcessTree(-1, [...processesSeenUnderVSCode]);
+    rememberProcessesUnderVSCode();
+    const killed = killPids([...processesSeenUnderVSCode.values()]);
     processesSeenUnderVSCode.clear();
     return killed;
 }
 
 async function reloadWindow(): Promise<void> {
-    processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
+    rememberProcessesUnderVSCode();
     await page.executePaletteCommand('Reload Window');
     await page.page.waitForTimeout(3000).catch(() => undefined);
     page = new ExtendedPage(await vscode!.firstWindow({ timeout: 60000 }));
@@ -635,7 +639,7 @@ export function initTest(newProject: boolean = true, skipProjectCreation: boolea
     test.afterEach(async ({ }, testInfo) => {
         // Remembered now, while Electron is still there to be asked: when the app is gone by the
         // teardown, the language server it had spawned is still running and would be missed.
-        processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
+        rememberProcessesUnderVSCode();
         const status = testInfo.status ?? 'skipped';
         lastTestFailed = status === 'failed' || status === 'timedOut' || status === 'interrupted';
         const statusEmoji = status === 'passed' ? '✅' : status === 'failed' ? '❌' : '⏭️';
@@ -694,7 +698,7 @@ export function initMigrationTest() {
     test.afterEach(async ({ }, testInfo) => {
         // Remembered now, while Electron is still there to be asked: when the app is gone by the
         // teardown, the language server it had spawned is still running and would be missed.
-        processesUnderVSCode().forEach((pid) => processesSeenUnderVSCode.add(pid));
+        rememberProcessesUnderVSCode();
         const status = testInfo.status ?? 'skipped';
         lastTestFailed = status === 'failed' || status === 'timedOut' || status === 'interrupted';
         const statusEmoji = status === 'passed' ? '✅' : status === 'failed' ? '❌' : '⏭️';

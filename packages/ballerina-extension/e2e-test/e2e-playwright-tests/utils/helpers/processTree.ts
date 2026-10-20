@@ -75,7 +75,7 @@ export function commandsOf(pids: number[]): string[] {
 
 // Kills a process tree. On Windows taskkill /T takes the root and everything under it; elsewhere the
 // root is the caller's to kill and the descendants collected earlier are killed here, parents first.
-export function killProcessTree(root: number, descendants: number[]): number {
+export function killProcessTree(root: number, descendants: ProcessEntry[]): number {
     if (process.platform === 'win32') {
         try {
             execFileSync('taskkill', ['/PID', String(root), '/T', '/F'], { stdio: 'ignore', timeout: 10000 });
@@ -84,10 +84,29 @@ export function killProcessTree(root: number, descendants: number[]): number {
         }
         return 0;
     }
+    return killPids(descendants);
+}
+
+// Kills remembered processes, each only while ps still reports it under the command it was seen
+// with: a pid of a short-lived helper can belong to an unrelated process by the time it is reaped.
+export function killPids(entries: ProcessEntry[]): number {
+    if (process.platform === 'win32' || entries.length === 0) {
+        return 0;
+    }
+    const live = new Map<number, string>();
+    for (const line of commandsOf(entries.map((entry) => entry.pid))) {
+        const match = line.match(/^(\d+)\s+(.*)$/);
+        if (match) {
+            live.set(Number(match[1]), match[2]);
+        }
+    }
     let killed = 0;
-    for (const pid of descendants) {
+    for (const entry of entries) {
+        if (live.get(entry.pid) !== entry.command) {
+            continue;
+        }
         try {
-            process.kill(pid, 'SIGKILL');
+            process.kill(entry.pid, 'SIGKILL');
             killed++;
         } catch {
             // already gone

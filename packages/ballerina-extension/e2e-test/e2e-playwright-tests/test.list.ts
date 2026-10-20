@@ -22,7 +22,7 @@ import { test } from '@playwright/test';
 import * as helpers from './utils/helpers';
 import { extensionsFolder, newProjectPath, zipProjectSnapshot } from './utils/helpers';
 import { downloadExtensionFromMarketplace } from '@wso2/playwright-vscode-tester';
-import { descendantPids, killProcessTree } from './utils/helpers/processTree';
+import { descendants, killProcessTree } from './utils/helpers/processTree';
 import fs from 'fs';
 import path from 'path';
 const videosFolder = path.join(__dirname, '..', 'test-resources', 'videos');
@@ -372,7 +372,7 @@ test.afterAll(async () => {
                 // keeps running on its stdio until the job ends, one JVM per VS Code launch (19 were
                 // still alive at the end of a group 5 job). Enough of them starve the runner and
                 // the job ends with "The runner has received a shutdown signal".
-                const children = descendantPids(electronProcess.pid);
+                const children = descendants(electronProcess.pid);
                 await new Promise<void>((resolve) => {
                     let settled = false;
                     const done = () => {
