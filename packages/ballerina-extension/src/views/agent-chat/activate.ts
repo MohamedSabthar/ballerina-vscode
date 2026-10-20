@@ -25,7 +25,7 @@ export interface AgentChatContextAgent {
     name: string;
     basePath: string;
     chatEp: string;
-    detectedChatEp: string;
+    endpointKey: string;
     chatSessionId: string;
 }
 

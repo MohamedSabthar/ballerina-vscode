@@ -54,11 +54,11 @@ export function updateChatSessionId(endpoint: string, newSessionId: string): voi
     chatSessionMap.set(endpoint, newSessionId);
 }
 
-// User-edited chat endpoints, keyed by the detected endpoint they replace
+// User-edited chat endpoints, keyed by project and the detected endpoint they replace
 const chatEndpointOverrides: Map<string, string> = new Map();
 
-export function overrideChatEndpoint(detectedEndpoint: string, chatEndpoint: string): void {
-    chatEndpointOverrides.set(detectedEndpoint, chatEndpoint);
+export function overrideChatEndpoint(endpointKey: string, chatEndpoint: string): void {
+    chatEndpointOverrides.set(endpointKey, chatEndpoint);
 }
 
 export function activateTryItCommand(ballerinaExtInstance: BallerinaExtension) {
@@ -217,7 +217,7 @@ async function openTryItView(withNotice: boolean = false, resourceMetadata?: Res
             const existingEntry = agentServicesWithPorts.find(e => e.service === selectedService);
             selectedService.port = existingEntry ? existingEntry.port : await getServicePort(projectPath, selectedService);
 
-            await openChatView(selectedService, agentServicesWithPorts, wasServiceAlreadyRunning);
+            await openChatView(projectPath, selectedService, agentServicesWithPorts, wasServiceAlreadyRunning);
         }
 
         // Setup the error log watcher
@@ -311,6 +311,7 @@ function getAgentDisplayName(basePath: string): string {
 }
 
 async function openChatView(
+    projectPath: string,
     selectedService: ServiceInfo,
     allAgentServices: { service: ServiceInfo; port: number }[],
     wasServiceAlreadyRunning: boolean
@@ -319,7 +320,8 @@ async function openChatView(
         // Build agent info for all agent services
         const agents = allAgentServices.map(({ service, port }) => {
             const detectedChatEp = buildChatEndpoint(service.basePath, port);
-            const chatEndpoint = chatEndpointOverrides.get(detectedChatEp) ?? detectedChatEp;
+            const endpointKey = `${projectPath}|${detectedChatEp}`;
+            const chatEndpoint = chatEndpointOverrides.get(endpointKey) ?? detectedChatEp;
             let sessionId: string;
 
             if (!wasServiceAlreadyRunning) {
@@ -334,7 +336,7 @@ async function openChatView(
                 name: getAgentDisplayName(service.basePath),
                 basePath: service.basePath,
                 chatEp: chatEndpoint,
-                detectedChatEp,
+                endpointKey,
                 chatSessionId: sessionId,
             };
         });

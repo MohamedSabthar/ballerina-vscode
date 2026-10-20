@@ -681,7 +681,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
         const activeAgent = ctx.agents?.find(a => a.name === ctx.activeAgentName);
         if (activeAgent) {
             activeAgent.chatEp = chatEp;
-            overrideChatEndpoint(activeAgent.detectedChatEp, chatEp);
+            overrideChatEndpoint(activeAgent.endpointKey, chatEp);
         }
         ctx.chatEp = chatEp;
         updateChatSessionId(chatEp, ctx.chatSessionId);
