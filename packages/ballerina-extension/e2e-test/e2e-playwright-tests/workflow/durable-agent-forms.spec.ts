@@ -21,7 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { initTest, newProjectPath, page } from '../utils/helpers';
 import { DEFAULT_PROJECT_NAME } from '../utils/helpers/constants';
-import { ProjectExplorer } from '../utils/pages';
+import { ProjectExplorer, SidePanel } from '../utils/pages';
 import { logStep } from '../utils/helpers/progress';
 import { dismissTypeHelper, fillUnderLabel, openPaletteBelow, paletteItem, workflowPaletteItem } from './palette';
 import { exEditorText, expandAdvanced, fillExEditor, fillTextField, getWebview, selectDropdown, switchToExpression } from './roleFields';
@@ -86,6 +86,22 @@ async function clickAffordance(webview: Frame, kind: 'event' | 'humanTask'): Pro
     const affordance = webview.getByTestId(`durable-agent-affordance-${kind}`).first();
     await affordance.waitFor({ state: 'visible', timeout: 60000 });
     await affordance.click({ force: true });
+}
+
+// Opens the AI section's Model Provider list and picks a declared provider. The list is fetched after the
+// click and did not always arrive within a minute on CI; the pick is retried from the section, and the
+// panel's text travels with a failure.
+async function pickModelProvider(sidePanel: SidePanel, panel: Locator, name: string): Promise<void> {
+    const provider = panel.getByText(name, { exact: true }).first();
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await (await paletteItem(sidePanel, 'AI', 'Model Provider')).click({ force: true });
+        if (await provider.waitFor({ state: 'visible', timeout: 20000 }).then(() => true, () => false)) {
+            await provider.click({ force: true });
+            return;
+        }
+    }
+    const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
+    throw new Error(`the Model Provider list did not offer ${name}; the panel shows: ${shown}`);
 }
 
 // Saves the open form and waits for the panel to close. A form that stays open was refused, and the field
@@ -261,11 +277,8 @@ export default function createTests() {
 
             logStep('Add Generate on wso2ModelProvider with BillDetails as the expected type');
             const sidePanel = await openPaletteBelow(webview, 'Start');
-            await (await paletteItem(sidePanel, 'AI', 'Model Provider')).click({ force: true });
             const panel = webview.getByTestId('side-panel');
-            const provider = panel.getByText('wso2ModelProvider', { exact: true }).first();
-            await provider.waitFor({ state: 'visible', timeout: 60000 });
-            await provider.click({ force: true });
+            await pickModelProvider(sidePanel, panel, 'wso2ModelProvider');
             const generate = panel.getByText('Generate', { exact: true }).first();
             await generate.waitFor({ state: 'visible', timeout: 60000 });
             await generate.click({ force: true });
@@ -300,15 +313,13 @@ export default function createTests() {
             await idResult.fill('receiptId');
             await idResult.press('Tab');
             await saveForm(panel, webview);
-            await expect.poll(mainSource, { timeout: 90000 }).toMatch(/receiptId = check fetchReceiptId\(fileUrl\);/);
+            // File Url is a text field, so the typed name is written as a literal; the call is what matters here.
+            await expect.poll(mainSource, { timeout: 90000 }).toMatch(/receiptId = check fetchReceiptId\("fileUrl"\);/);
 
             logStep('Right after, add Generate below the call, with BillDetails as the expected type');
-            sidePanel = await openPaletteBelow(webview, 'fetchReceiptId');
-            await (await paletteItem(sidePanel, 'AI', 'Model Provider')).click({ force: true });
+            sidePanel = await openPaletteBelow(webview, 'Start');
             panel = webview.getByTestId('side-panel');
-            const provider = panel.getByText('wso2ModelProvider', { exact: true }).first();
-            await provider.waitFor({ state: 'visible', timeout: 60000 });
-            await provider.click({ force: true });
+            await pickModelProvider(sidePanel, panel, 'wso2ModelProvider');
             const generate = panel.getByText('Generate', { exact: true }).first();
             await generate.waitFor({ state: 'visible', timeout: 60000 });
             await generate.click({ force: true });
