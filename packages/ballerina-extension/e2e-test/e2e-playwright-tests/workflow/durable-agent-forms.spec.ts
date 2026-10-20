@@ -75,10 +75,15 @@ async function saveForm(panel: Locator, frame?: Frame): Promise<void> {
         throw new Error(`Save stayed disabled; the panel shows: ${shown}`);
     }
     await dismissTypeHelper(panel, frame);
-    // Not forced: a click Playwright refuses names the element covering Save, where a forced one
-    // would land in it without a word.
+    // A plain click first: when Playwright refuses it, its message names what covers Save. The forced
+    // click that follows is how the button is reached in the other specs (the panel's own motion keeps
+    // the button from counting as stable), and the refusal travels with any failure after it.
     await saveButton.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => undefined);
-    await saveButton.click({ timeout: 15000 });
+    const refused = await saveButton.click({ timeout: 5000 }).then(() => '', (error: Error) =>
+        error.message.replace(/\s+/g, ' ').slice(0, 400));
+    if (refused) {
+        await saveButton.click({ force: true });
+    }
     // A save the LS or the form refuses leaves the panel open; its text says why, the timeout alone does not.
     await saveButton.waitFor({ state: 'hidden', timeout: 90000 }).catch(async (error) => {
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ');
@@ -92,6 +97,7 @@ async function saveForm(panel: Locator, frame?: Frame): Promise<void> {
             .evaluateAll((elements) => elements.slice(0, 8).map((element) => element.outerHTML.replace(/\s+/g, ' ').slice(0, 300)))
             .catch(() => [] as string[]);
         throw new Error(`Save did not close the form; the panel shows: ${shown.slice(0, 1200)}${tail}`
+            + (refused ? `; the plain click was refused: ${refused}` : '; the plain click went through')
             + (toasts ? `; VS Code notifications: ${toasts}` : '; no VS Code notification shown')
             + (marked.length ? `; error-marked elements: ${marked.join(' || ')}` : '; no error-marked element in the panel'),
             { cause: error });
