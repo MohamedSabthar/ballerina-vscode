@@ -83,8 +83,15 @@ async function saveForm(panel: Locator): Promise<void> {
         // A refused save is reported outside the webview, as a VS Code notification.
         const toasts = (await page.page.locator('.notification-toast, .notifications-list-container').allInnerTexts()
             .catch(() => [] as string[])).join(' | ').replace(/\s+/g, ' ').slice(0, 600);
+        // A submit the form refuses without a message leaves its mark on the field: an aria-invalid control
+        // or an error-styled element. Their markup names the field.
+        const marked = await panel.locator('[aria-invalid="true"], [class*="error" i], [class*="invalid" i], [data-error]')
+            .evaluateAll((elements) => elements.slice(0, 8).map((element) => element.outerHTML.replace(/\s+/g, ' ').slice(0, 300)))
+            .catch(() => [] as string[]);
         throw new Error(`Save did not close the form; the panel shows: ${shown.slice(0, 1200)}${tail}`
-            + (toasts ? `; VS Code notifications: ${toasts}` : '; no VS Code notification shown'), { cause: error });
+            + (toasts ? `; VS Code notifications: ${toasts}` : '; no VS Code notification shown')
+            + (marked.length ? `; error-marked elements: ${marked.join(' || ')}` : '; no error-marked element in the panel'),
+            { cause: error });
     });
 }
 
