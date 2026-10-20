@@ -28,6 +28,7 @@ import {
 import { approvalManager } from '../../features/ai/state/ApprovalManager';
 import { cleanupTempProject } from '../../features/ai/utils/project/temp-project';
 import { generateId } from './idGenerators';
+import { resolveWorkspaceIdentity } from './workspaceIdentity';
 import {
     CopilotPersistenceStore,
     PersistedThread,
@@ -37,6 +38,8 @@ import {
     PersistedCompactionMetadata,
     PersistedCodeContext,
 } from '@wso2/copilot-utilities/chat-persistence';
+
+export { resolveWorkspaceIdentity };
 
 // Console-summary fields persisted alongside the shared schema. They are optional
 // additions, so no schema version bump: the store writes the object as-is, and
@@ -51,19 +54,6 @@ const UNNAMED_THREAD_NAME = 'New Chat';
 function deriveThreadName(thread: ChatThread): string {
     const firstPrompt = thread.generations[0]?.userPrompt?.slice(0, THREAD_NAME_MAX_LENGTH).trim();
     return firstPrompt || UNNAMED_THREAD_NAME;
-}
-
-/**
- * Resolve a stable workspace identity for persistence hashing.
- *
- * In the cloud editor, every project is checked out at the same filesystem path
- * inside its container, so hashing the path would collide across projects when
- * a container is reused. When the cloud-assigned project id is available via
- * `CLOUD_INITIAL_PROJECT_ID`, use it directly as the identity. Otherwise fall
- * back to the resolved path (local dev and any non-cloud environment).
- */
-export function resolveWorkspaceIdentity(projectRootPath: string): string {
-    return process.env.CLOUD_INITIAL_PROJECT_ID ?? path.resolve(projectRootPath);
 }
 
 /**
