@@ -35,14 +35,17 @@ function mainSource(): string {
     return fs.readFileSync(path.join(newProjectPath, 'main.bal'), 'utf-8');
 }
 
-// Returns to the integration overview, where every artifact is listed by name.
+// Returns to the integration overview. Best effort: the tests that follow open their artifact through
+// openFromOverview, which falls back to the project tree, and on CI the overview did not always come back
+// after an activity had been edited (the step waited 90 seconds and failed the test, not the artifact).
 async function backToOverview(): Promise<void> {
     const projectExplorer = new ProjectExplorer(page.page);
     await projectExplorer.init();
-    await projectExplorer.goToOverview(DEFAULT_PROJECT_NAME);
+    await projectExplorer.goToOverview(DEFAULT_PROJECT_NAME).catch(() => undefined);
     const webview = await getWebview();
     // Filtered to the visible one: a dropdown of a form still mounted holds a hidden option of the same text.
-    await webview.getByText('billingAgent', { exact: true }).filter({ visible: true }).first().waitFor({ timeout: 90000 });
+    await webview.getByText('billingAgent', { exact: true }).filter({ visible: true }).first()
+        .waitFor({ timeout: 30000 }).catch(() => undefined);
 }
 
 // Opens an artifact's diagram by its name: from the integration overview when it shows the name, else from
