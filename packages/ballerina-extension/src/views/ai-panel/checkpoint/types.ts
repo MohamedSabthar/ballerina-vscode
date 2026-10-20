@@ -52,6 +52,9 @@ export interface CheckpointBackend {
     readonly kind: CheckpointStorage['kind'];
     capture(ctx: CaptureContext): Promise<CaptureResult>;
     restoreCandidates(cp: Checkpoint, current: ScannedFile[]): Promise<string[]>;
+    changedUnstored(cp: Checkpoint, current: ScannedFile[]): Promise<string[]>;
+    canReuseAsPrevious(cp: Checkpoint): boolean;
+    hasStoredContent(): boolean;
     resolve(cp: Checkpoint, paths: string[]): Promise<Map<string, ResolvedContent>>;
     references(cp: Checkpoint): Iterable<string>;
     collectGarbage(live: ReadonlySet<string>, minAgeMs?: number): Promise<number>;

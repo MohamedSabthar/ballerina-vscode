@@ -120,6 +120,16 @@ describe('ContentStoreBackend', () => {
         expect(await backend.restoreCandidates(cp, [])).toEqual([]);
     });
 
+    it('reports a skipped file as changed only once its size or mtime moved', async () => {
+        write('big.bin', Buffer.alloc(LIMITS.maxFileSize + 1, 1));
+        const { cp } = await captureCp();
+
+        expect(await backend.changedUnstored(cp, scan())).toEqual([]);
+        write('big.bin', Buffer.alloc(LIMITS.maxFileSize + 2, 1));
+        expect(await backend.changedUnstored(cp, scan())).toEqual(['big.bin']);
+        expect(await backend.changedUnstored(cp, [])).toEqual([]);
+    });
+
     it('marks a file it cannot read as unreadable', async () => {
         write('locked.txt', 'held\n');
         jest.spyOn(console, 'error').mockImplementation(() => undefined);

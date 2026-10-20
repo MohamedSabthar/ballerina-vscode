@@ -29,7 +29,6 @@ import { approvalManager } from '../../features/ai/state/ApprovalManager';
 import { cleanupTempProject } from '../../features/ai/utils/project/temp-project';
 import { generateId } from './idGenerators';
 import { resolveWorkspaceIdentity } from './workspaceIdentity';
-import { blobStoreDir, FsBlobStore } from './checkpoint/blobStore';
 import {
     CopilotPersistenceStore,
     PersistedThread,
@@ -787,8 +786,9 @@ export class ChatStateStorage {
             const { getCheckpointService } = await import('../../views/ai-panel/checkpoint/checkpointService');
             const { notifyCheckpointCaptured } = await import('../../RPCLayer');
 
-            const checkpoint = await getCheckpointService(projectRootPath).capture(generationId, {
-                previous: this.newestContentStoreCheckpoint(projectRootPath),
+            const service = getCheckpointService(projectRootPath);
+            const checkpoint = await service.capture(generationId, {
+                previous: service.pickPrevious(this.inMemoryCheckpoints(projectRootPath)),
             });
 
             if (checkpoint) {
@@ -804,17 +804,14 @@ export class ChatStateStorage {
         }
     }
 
-    private newestContentStoreCheckpoint(projectRootPath: string): Checkpoint | undefined {
-        let newest: Checkpoint | undefined;
+    private *inMemoryCheckpoints(projectRootPath: string): Iterable<Checkpoint> {
         for (const thread of this.storage.get(projectRootPath)?.threads.values() ?? []) {
             for (const generation of thread.generations) {
-                const checkpoint = generation.checkpoint;
-                if (checkpoint?.storage?.kind === 'content-store' && (!newest || checkpoint.timestamp > newest.timestamp)) {
-                    newest = checkpoint;
+                if (generation.checkpoint) {
+                    yield generation.checkpoint;
                 }
             }
         }
-        return newest;
     }
 
     private scheduleCheckpointGc(projectRootPath: string): void {
@@ -827,7 +824,6 @@ export class ChatStateStorage {
         this.checkpointGcTimers.set(projectRootPath, timer);
     }
 
-    /** Runs a scheduled checkpoint GC now instead of after its debounce, and waits for it. */
     async flushCheckpointGc(projectRootPath: string): Promise<void> {
         const timer = this.checkpointGcTimers.get(projectRootPath);
         if (timer !== undefined) {
@@ -853,12 +849,21 @@ export class ChatStateStorage {
 
     private async collectCheckpointGarbage(projectRootPath: string): Promise<void> {
         await Promise.allSettled([...this.pendingCheckpointCaptures.values()]);
-        if (!new FsBlobStore(blobStoreDir(this.persistenceStore.getWorkspaceDir(projectRootPath))).exists()) {
+        const { getCheckpointService } = await import('./checkpoint/checkpointService');
+        const service = getCheckpointService(projectRootPath);
+        if (!service.hasStoredContent()) {
             return;
         }
-        const live: Checkpoint[] = [];
+        const threads = this.storage.get(projectRootPath)?.threads;
+        const live: Checkpoint[] = [...this.inMemoryCheckpoints(projectRootPath)];
         for (const threadId of this.persistenceStore.listThreadIds(projectRootPath)) {
+            const inMemory = new Set(
+                (threads?.get(threadId)?.generations ?? []).filter(g => g.checkpoint).map(g => g.id)
+            );
             for (const generationId of this.persistenceStore.listCheckpoints(projectRootPath, threadId)) {
+                if (inMemory.has(generationId)) {
+                    continue;
+                }
                 const persisted = await this.persistenceStore.loadCheckpointAsync(projectRootPath, threadId, generationId);
                 if (persisted) {
                     live.push(fromPersistedCheckpoint(persisted));
@@ -868,15 +873,7 @@ export class ChatStateStorage {
                 }
             }
         }
-        for (const thread of this.storage.get(projectRootPath)?.threads.values() ?? []) {
-            for (const generation of thread.generations) {
-                if (generation.checkpoint) {
-                    live.push(generation.checkpoint);
-                }
-            }
-        }
-        const { getCheckpointService } = await import('./checkpoint/checkpointService');
-        await getCheckpointService(projectRootPath).collectGarbage(live, { minAgeMs: this.checkpointGcMinAgeMs });
+        await service.collectGarbage(live, { minAgeMs: this.checkpointGcMinAgeMs });
     }
 
     /**

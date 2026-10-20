@@ -19,7 +19,7 @@
 import * as path from 'path';
 import { Checkpoint } from '@wso2/ballerina-core/lib/state-machine-types';
 import { getCheckpointService } from './checkpointService';
-import { CheckpointContentUnavailableError, CheckpointUnknownFormatError } from './types';
+import { CheckpointUnknownFormatError } from './types';
 
 export { renderDatamapper } from './restoreApplier';
 
@@ -27,12 +27,6 @@ export async function captureWorkspaceSnapshot(projectRootPath: string, messageI
     return getCheckpointService(projectRootPath).capture(messageId);
 }
 
-/**
- * Restores the workspace to a checkpoint snapshot. Returns {@code true} only when the restore
- * actually applied; callers that mark a generation reverted (and tell the model its changes were
- * undone) must gate that on the return value, since a failed {@code applyEdit} is reported to the
- * user here but not thrown.
- */
 export async function restoreWorkspaceSnapshot(
     projectRootPath: string, checkpoint: Checkpoint, skipArtifactWait = false
 ): Promise<boolean> {
@@ -63,11 +57,8 @@ export async function readDiffOriginal(
         if (error instanceof CheckpointUnknownFormatError) {
             return { kind: 'newerFormat' };
         }
-        if (error instanceof CheckpointContentUnavailableError) {
-            console.error(`[Checkpoint] Cannot read the original of ${relativePath}: ${error.message}`);
-            return { kind: 'unavailable', message: UNAVAILABLE_ORIGINAL_MESSAGES.missing };
-        }
-        throw error;
+        console.error(`[Checkpoint] Cannot read the original of ${relativePath}:`, error);
+        return { kind: 'unavailable', message: UNAVAILABLE_ORIGINAL_MESSAGES.missing };
     }
     const original = originals.get(relativePath.split(path.sep).join('/'));
     if (original?.state === 'content') {

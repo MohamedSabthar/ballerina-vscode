@@ -162,6 +162,21 @@ describe("CheckpointService", () => {
         fs.rmSync(storeDir, { recursive: true, force: true });
     });
 
+    it("picks the newest checkpoint the default backend can reuse as previous", () => {
+        const cp = (id: string, timestamp: number, kind: Kind) =>
+            ({ id, messageId: id, timestamp, fileList: [], snapshotSize: 0, storage: kind === "inline" ? { kind } : { kind, files: {} } }) as Checkpoint;
+        const candidates = [cp("old", 1, "content-store"), cp("inline", 3, "inline"), cp("new", 2, "content-store")];
+
+        expect(service().pickPrevious(candidates)?.id).toBe("new");
+        expect(service("inline").pickPrevious(candidates)).toBeUndefined();
+    });
+
+    it("has stored content only once the content store exists", () => {
+        expect(service().hasStoredContent()).toBe(true);
+        fs.rmSync(storeDir, { recursive: true, force: true });
+        expect(service().hasStoredContent()).toBe(false);
+    });
+
     describe("capture", () => {
         it("stores new checkpoints in the content store, stamped as schema 2", async () => {
             const cp = await service().capture("msg-1");
@@ -375,16 +390,16 @@ describe("CheckpointService", () => {
         });
     });
 
-    it("refuses to start against a checkpoint schema older than 2", () => {
+    it.each([1, 3])("refuses to start against checkpoint schema %i", version => {
         jest.isolateModules(() => {
             jest.doMock("@wso2/copilot-utilities/chat-persistence", () => ({
                 ...jest.requireActual("@wso2/copilot-utilities/chat-persistence"),
-                CURRENT_CHECKPOINT_SCHEMA_VERSION: 1,
+                CURRENT_CHECKPOINT_SCHEMA_VERSION: version,
             }));
             const isolated = require("../views/ai-panel/checkpoint/checkpointService");
             expect(() => new isolated.CheckpointService({
                 backends: [inline], defaultKind: "inline", config: () => config, notify: notify.notifier,
-            })).toThrow(/version 2/);
+            })).toThrow(/supported version 2/);
         });
     });
 });

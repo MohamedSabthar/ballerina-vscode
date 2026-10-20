@@ -52,6 +52,9 @@ function countOnce(stored: Stored, counted: Set<string>): number {
     return stored.createdBytes;
 }
 
+const isSkippedEntry = (entry: unknown): entry is Exclude<CheckpointFileEntry, HashEntry> =>
+    typeof entry === 'object' && entry !== null && 'skipped' in entry;
+
 const sha256 = (bytes: Buffer) => crypto.createHash('sha256').update(bytes).digest('hex');
 
 export class ContentStoreBackend implements CheckpointBackend {
@@ -107,6 +110,24 @@ export class ContentStoreBackend implements CheckpointBackend {
             chunk.forEach(([p], i) => differs[i] && candidates.push(p));
         }
         return candidates;
+    }
+
+    async changedUnstored(cp: Checkpoint, current: ScannedFile[]): Promise<string[]> {
+        const byPath = new Map(current.map(file => [file.path, file]));
+        return Object.entries(this.filesOf(cp))
+            .filter(([p, entry]) => {
+                const file = byPath.get(p);
+                return isSkippedEntry(entry) && !!file && (file.size !== entry.size || file.mtimeMs !== entry.mtimeMs);
+            })
+            .map(([p]) => p);
+    }
+
+    canReuseAsPrevious(cp: Checkpoint): boolean {
+        return cp.storage?.kind === 'content-store';
+    }
+
+    hasStoredContent(): boolean {
+        return this.store.exists();
     }
 
     async resolve(cp: Checkpoint, paths: string[]): Promise<Map<string, ResolvedContent>> {
@@ -185,11 +206,13 @@ export class ContentStoreBackend implements CheckpointBackend {
             }
         }
         const byPath = new Map(scanned.map(file => [file.path, file]));
+        const missing: string[][] = [];
+        for (const chunk of inChunks([...pathsByHash])) {
+            const present = await Promise.all(chunk.map(([hash]) => this.store.touch(hash)));
+            chunk.forEach(([, paths], i) => present[i] || missing.push(paths));
+        }
         let createdBytes = 0;
-        for (const [hash, paths] of pathsByHash) {
-            if (await this.store.touch(hash)) {
-                continue;
-            }
+        for (const paths of missing) {
             for (const p of paths) {
                 const stored = await this.storeFile(await this.restat(byPath.get(p)), limits);
                 files[p] = stored.entry;

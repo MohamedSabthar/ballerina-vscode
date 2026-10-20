@@ -40,7 +40,6 @@ import {
     CheckpointUnknownFormatError,
     OriginalContent,
     RestorePlan,
-    ScannedFile,
     SUPPORTED_CHECKPOINT_SCHEMA_VERSION,
 } from './types';
 import { InlineSnapshotBackend } from './backends/inlineSnapshotBackend';
@@ -59,7 +58,7 @@ export interface CheckpointServiceDeps {
     notify: CheckpointNotifier;
 }
 
-const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+const generateId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 
 const isRecord = (value: unknown): boolean =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -70,9 +69,9 @@ export class CheckpointService {
     private readonly backends = new Map<string, CheckpointBackend>();
 
     constructor(private readonly deps: CheckpointServiceDeps) {
-        if (CURRENT_CHECKPOINT_SCHEMA_VERSION < 2) {
+        if (CURRENT_CHECKPOINT_SCHEMA_VERSION !== SUPPORTED_CHECKPOINT_SCHEMA_VERSION) {
             throw new Error(
-                `Checkpoint schema ${CURRENT_CHECKPOINT_SCHEMA_VERSION} cannot hold storage backends; version 2 is required`
+                `Checkpoint schema ${CURRENT_CHECKPOINT_SCHEMA_VERSION} does not match the supported version ${SUPPORTED_CHECKPOINT_SCHEMA_VERSION}`
             );
         }
         for (const backend of deps.backends) {
@@ -85,6 +84,21 @@ export class CheckpointService {
 
     get defaultKind(): StorageKind {
         return this.deps.defaultKind;
+    }
+
+    pickPrevious(candidates: Iterable<Checkpoint>): Checkpoint | undefined {
+        const backend = this.backends.get(this.deps.defaultKind)!;
+        let newest: Checkpoint | undefined;
+        for (const cp of candidates) {
+            if (backend.canReuseAsPrevious(cp) && (!newest || cp.timestamp > newest.timestamp)) {
+                newest = cp;
+            }
+        }
+        return newest;
+    }
+
+    hasStoredContent(): boolean {
+        return [...this.backends.values()].some(backend => backend.hasStoredContent());
     }
 
     async capture(messageId: string, opts: { previous?: Checkpoint } = {}): Promise<Checkpoint | null> {
@@ -243,14 +257,13 @@ export class CheckpointService {
         // turn everything it used to hide into "not in the snapshot", and delete it.
         const ignorePatterns = cp.ignorePatterns ?? this.deps.config().ignorePatterns;
         const currentFiles = await scanWorkspace(workspaceRoot, ignorePatterns);
-        const recorded = cp.storage?.kind === 'content-store' ? cp.storage.files : {};
-        const skippedPaths = Object.keys(recorded).filter(p => isRecord(recorded[p]) && 'skipped' in recorded[p]);
+        const changedUnstored = await backend.changedUnstored(cp, currentFiles);
 
         // An open editor can differ from the checkpoint while its file on disk does not.
         const candidates = new Set([
             ...await backend.restoreCandidates(cp, currentFiles),
             ...openDocumentPaths(workspaceRoot),
-            ...skippedPaths,
+            ...changedUnstored,
         ]);
 
         let resolved: Map<string, OriginalContent>;
@@ -264,19 +277,15 @@ export class CheckpointService {
             throw error;
         }
 
-        const currentByPath = new Map<string, ScannedFile>(currentFiles.map(file => [file.path, file]));
+        const changed = new Set(changedUnstored);
         const writes: RestorePlan['writes'] = new Map();
         const notRestored: string[] = [];
         for (const [p, content] of resolved) {
             if (content.state === 'content') {
                 // Inline content keeps the string form, so the applier still refuses a lossy decode.
                 writes.set(p, backend.kind === 'inline' ? content.bytes.toString('utf8') : content.bytes);
-            } else if (content.state === 'unavailable') {
-                const entry = Object.prototype.hasOwnProperty.call(recorded, p) ? recorded[p] : undefined;
-                const current = currentByPath.get(p);
-                if (entry && current && (current.size !== entry.size || current.mtimeMs !== entry.mtimeMs)) {
-                    notRestored.push(p);
-                }
+            } else if (content.state === 'unavailable' && changed.has(p)) {
+                notRestored.push(p);
             }
         }
 

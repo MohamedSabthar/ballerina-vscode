@@ -64,6 +64,7 @@ import { getCheckpointService } from "../views/ai-panel/checkpoint/checkpointSer
 import { checkpointNotifier } from "../views/ai-panel/checkpoint/checkpointNotifier";
 import { DEFAULT_CHECKPOINT_CONFIG } from "../views/ai-panel/checkpoint/checkpointConfig";
 import { readDiffOriginal } from "../views/ai-panel/checkpoint/checkpointUtils";
+import { FsBlobStore } from "../views/ai-panel/checkpoint/blobStore";
 
 const THREAD = "default";
 const ORIGINAL_BAL = "// before the generation\n";
@@ -218,6 +219,18 @@ describe("checkpoint formats on disk", () => {
             fs.rmSync(path.join(baseDir.current, "workspaces"), { recursive: true, force: true });
 
             await expect(readDiffOriginal(root, cp, "main.bal")).resolves.toMatchObject({ kind: "unavailable" });
+        });
+
+        it("reports a stored blob it cannot read as missing rather than failing", async () => {
+            const cp = (await getCheckpointService(root).capture("gen-1"))!;
+            const error = jest.spyOn(console, "error").mockImplementation(() => {});
+            jest.spyOn(FsBlobStore.prototype, "get").mockRejectedValue(Object.assign(new Error("EACCES"), { code: "EACCES" }));
+
+            await expect(readDiffOriginal(root, cp, "main.bal")).resolves.toEqual({
+                kind: "unavailable",
+                message: "The earlier version of this file is missing from the checkpoint, so it cannot be compared.",
+            });
+            expect(error).toHaveBeenCalled();
         });
     });
 });

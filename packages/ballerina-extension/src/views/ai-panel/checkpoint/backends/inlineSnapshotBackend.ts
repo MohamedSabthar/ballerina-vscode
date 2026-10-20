@@ -63,6 +63,18 @@ export class InlineSnapshotBackend implements CheckpointBackend {
         return Object.keys(cp.workspaceSnapshot ?? {});
     }
 
+    async changedUnstored(_cp: Checkpoint, _current: ScannedFile[]): Promise<string[]> {
+        return [];
+    }
+
+    canReuseAsPrevious(_cp: Checkpoint): boolean {
+        return false;
+    }
+
+    hasStoredContent(): boolean {
+        return false;
+    }
+
     async resolve(cp: Checkpoint, paths: string[]): Promise<Map<string, ResolvedContent>> {
         const snapshot = cp.workspaceSnapshot ?? {};
         const listed = new Set(cp.fileList);

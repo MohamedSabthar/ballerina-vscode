@@ -217,4 +217,31 @@ describe("checkpoint garbage collection", () => {
         expect(sweep).not.toHaveBeenCalled();
         expect(readdir.mock.calls.filter(([dir]) => String(dir).startsWith(objectsDir()))).toEqual([]);
     });
+
+    it("reads only the checkpoints it does not hold in memory, and keeps their blobs", async () => {
+        const storage = new ChatStateStorage(GC_NOW);
+        const doomed = storage.createNewThread(root);
+        fs.writeFileSync(at("only.bal"), "// only the doomed thread\n");
+        await captured(storage, doomed, "doomed");
+        fs.rmSync(at("only.bal"));
+        const kept = storage.createNewThread(root);
+        fs.writeFileSync(at("kept.bal"), "// in memory\n");
+        await captured(storage, kept, "kept");
+
+        fs.rmSync(at("kept.bal"));
+        fs.writeFileSync(at("other.bal"), "// other window\n");
+        const otherWindow = new ChatStateStorage(GC_NOW);
+        const otherThread = otherWindow.createNewThread(root);
+        const otherGen = await captured(otherWindow, otherThread, "other");
+
+        const persistence = (storage as unknown as { persistenceStore: CopilotPersistenceStore }).persistenceStore;
+        const load = jest.spyOn(persistence, "loadCheckpointAsync");
+        await storage.deleteThread(root, doomed);
+        await storage.flushCheckpointGc(root);
+
+        expect(load.mock.calls.map(([, threadId, generationId]) => [threadId, generationId])).toEqual([[otherThread, otherGen]]);
+        expect(fs.existsSync(blobOf("// only the doomed thread\n"))).toBe(false);
+        expect(fs.existsSync(blobOf("// in memory\n"))).toBe(true);
+        expect(fs.existsSync(blobOf("// other window\n"))).toBe(true);
+    });
 });
