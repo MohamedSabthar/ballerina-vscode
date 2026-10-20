@@ -73,20 +73,18 @@ export async function fillUnderLabel(scope: Locator, label: string, value: strin
 }
 
 // The type helper popup stays open over the fields below it, and over Save when the field is the last one:
-// a click there lands in the popup, even a forced one. Escape closes it from the field; when it does not,
-// clicking the panel's own title takes the focus away, and the popup has to be gone before going on.
-// The popup is rendered outside the panel, so it is looked for in the whole frame when one is given.
+// a click there lands in the popup, even a forced one. Escape from the field and a click on the panel title
+// both leave it open (seen on CI), so the exact match the field already holds is taken with Enter, which is
+// what the popup offers; the popup is rendered outside the panel, so it is looked for in the frame.
 export async function dismissTypeHelper(scope: Locator, frame?: Frame): Promise<void> {
     const popup = (frame ?? scope).getByText('to cancel', { exact: false }).first();
-    for (let attempt = 0; attempt < 3; attempt++) {
-        if (!await popup.isVisible().catch(() => false)) {
-            return;
-        }
-        if (attempt === 0) {
-            await page.page.keyboard.press('Escape');
-        } else {
-            await scope.locator('h1, h2, h3, h4').filter({ visible: true }).first().click({ timeout: 5000 }).catch(() => undefined);
-        }
+    if (!await popup.isVisible().catch(() => false)) {
+        return;
+    }
+    await page.page.keyboard.press('Enter');
+    await page.page.waitForTimeout(300);
+    if (await popup.isVisible().catch(() => false)) {
+        await page.page.keyboard.press('Escape');
         await page.page.waitForTimeout(300);
     }
     await popup.waitFor({ state: 'hidden', timeout: 5000 });
