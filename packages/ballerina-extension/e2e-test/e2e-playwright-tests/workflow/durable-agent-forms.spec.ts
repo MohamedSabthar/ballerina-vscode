@@ -289,12 +289,8 @@ export default function createTests() {
             let sidePanel = await openPaletteBelow(webview, 'Start');
             await (await paletteItem(sidePanel, 'Statement', 'Call Function')).click({ force: true });
             let panel = webview.getByTestId('side-panel');
-            const withinProject = panel.getByText('Within Project', { exact: true }).first();
-            await withinProject.waitFor({ state: 'visible', timeout: 60000 });
-            await withinProject.click({ force: true });
-            const fetchId = panel.getByText('fetchReceiptId', { exact: true }).first();
-            await fetchId.waitFor({ state: 'visible', timeout: 60000 });
-            await fetchId.click({ force: true });
+            // The project's own functions are listed under Current Integration.
+            await (await paletteItem(sidePanel, 'Current Integration', 'fetchReceiptId')).click({ force: true });
             await fillUnderLabel(panel, 'File Url', 'fileUrl');
             const idResult = panel.getByRole('textbox', { name: /Result/ }).first();
             await idResult.waitFor({ timeout: 60000 });
