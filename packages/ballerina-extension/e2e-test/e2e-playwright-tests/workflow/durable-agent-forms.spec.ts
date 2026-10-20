@@ -142,8 +142,24 @@ export default function createTests() {
                 .toMatch(/events:\s*\{\s*bill:\s*\{[^}]*\}\s*,\s*chat:\s*\{request:\s*string,\s*response:\s*string\}\s*\}/);
         });
 
-        // The tasks name a user: a role given as an expression is refused at Save by the audience check
-        // although the editor shows it (wso2/product-integrator issue pending), which is not this map's concern.
+        // A role given as an expression is refused at Save by the audience check although the editor shows
+        // it (wso2/product-integrator#2824); the tasks below name a user instead. The roles case stays here,
+        // skipped, so the gap is visible and the test runs again once the issue is fixed.
+        test.fixme('Register a human task for a role given as an expression (wso2/product-integrator#2824)', async () => {
+            const webview = await getWebview();
+            await webview.getByTestId('durable-agent-run-node').waitFor({ state: 'visible', timeout: 60000 });
+
+            logStep('Register managerApproval for the MANAGER role');
+            await webview.getByTestId('durable-agent-affordance-humanTask').first().click({ force: true });
+            const panel = webview.getByTestId('side-panel');
+            await fillTextField(panel, 'Task Name', 'managerApproval');
+            await switchToExpression(panel, 'userRoles');
+            await fillExpression(webview, 'userRoles', '"MANAGER"');
+            await saveForm(panel, webview);
+            await expect.poll(mainSource, { timeout: 90000 })
+                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{userRoles:\s*"MANAGER"\}\s*\}/);
+        });
+
         test('Register a human task as the keyed map', async () => {
             const webview = await getWebview();
             await webview.getByTestId('durable-agent-run-node').waitFor({ state: 'visible', timeout: 60000 });

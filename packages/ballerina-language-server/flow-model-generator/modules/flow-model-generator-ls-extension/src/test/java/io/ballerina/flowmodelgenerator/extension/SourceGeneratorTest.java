@@ -231,7 +231,18 @@ public class SourceGeneratorTest extends AbstractLSTest {
                         "The durable agent's 'events' is written as a list, which ballerina/workflow 0.9.0 and later "
                                 + "do not accept, and the designer cannot rewrite its entry "
                                 + "'{name: \"note\", request: json // the note body }': declare the field as a "
-                                + "mapping keyed by name and try again"}
+                                + "mapping keyed by name and try again"},
+                {"durable_agent_register_event_list_reference_item_to_source.json",
+                        "The durable agent's 'events' is written as a list, which ballerina/workflow 0.9.0 and later "
+                                + "do not accept, and the designer cannot rewrite its entry 'sharedEvent': declare the "
+                                + "field as a mapping keyed by name and try again"},
+                {"durable_agent_register_event_list_constant_name_to_source.json",
+                        "The durable agent's 'events' is written as a list, which ballerina/workflow 0.9.0 and later "
+                                + "do not accept, and the designer cannot rewrite its entry "
+                                + "'{name: EVENT_NAME, request: json}': declare the field as a mapping keyed by name "
+                                + "and try again"},
+                {"durable_agent_register_event_list_stale_edit_to_source.json",
+                        "The durable agent's 'events' changed since the form was opened: reopen the entry and try again"}
         };
     }
 
@@ -288,6 +299,9 @@ public class SourceGeneratorTest extends AbstractLSTest {
                 "durable_agent_register_event_interpolated_name_to_source.json",
                 "durable_agent_register_event_keyed_rename_duplicate_to_source.json",
                 "durable_agent_register_event_list_commented_to_source.json",
+                "durable_agent_register_event_list_reference_item_to_source.json",
+                "durable_agent_register_event_list_constant_name_to_source.json",
+                "durable_agent_register_event_list_stale_edit_to_source.json",
                 // The following nodes are deprecated
                 "data_mapper1.json",
                 "data_mapper2.json",

@@ -46,3 +46,20 @@ final workflow:DurableAgent commentedAgent = check new ({
         }
     ]
 });
+
+final workflow:EventConfig sharedEvent = {request: json};
+
+const string EVENT_NAME = "ticket";
+
+# Listed events the designer cannot rewrite as keys: a reference item, and a name that is a constant.
+final workflow:DurableAgent refItemAgent = check new ({
+    systemPrompt: {role: "Shared", instructions: "Share."},
+    model: keyedModel,
+    events: [sharedEvent]
+});
+
+final workflow:DurableAgent constNameAgent = check new ({
+    systemPrompt: {role: "Tickets", instructions: "Track tickets."},
+    model: keyedModel,
+    events: [{name: EVENT_NAME, request: json}]
+});

@@ -1117,6 +1117,12 @@ public class WorkflowUtil {
             entries.add(keyedCapabilityEntry(item, fieldName));
         }
         if (!placed) {
+            // An edit whose entry is no longer where the form found it would keep the old entry and
+            // add the edited one: the same key twice, reported by the compiler far from the form.
+            if (editing != null) {
+                throw new UserFacingException("The durable agent's '" + fieldName
+                        + "' changed since the form was opened: reopen the entry and try again");
+            }
             entries.add(entry);
         }
         LinePosition open = list.openBracket().lineRange().startLine();
@@ -1170,8 +1176,9 @@ public class WorkflowUtil {
         return key + ": {" + String.join(", ", rest) + "}";
     }
 
-    // The node's source from its tokens alone: line breaks and runs of whitespace become one space,
-    // so the text can sit inside a one-line entry. Comments are the caller's to refuse first.
+    // The node's source from its tokens alone, spaced where the source was: a line break or a run
+    // of whitespace becomes one space, so the text can sit inside a one-line entry. Comments are
+    // the caller's to refuse first.
     private static String compactSource(Node node) {
         StringBuilder text = new StringBuilder();
         appendTokens(node, text);
@@ -1180,7 +1187,13 @@ public class WorkflowUtil {
 
     private static void appendTokens(Node node, StringBuilder text) {
         if (node instanceof Token token) {
-            text.append(' ').append(token.text()).append(' ');
+            if (!token.leadingMinutiae().isEmpty()) {
+                text.append(' ');
+            }
+            text.append(token.text());
+            if (!token.trailingMinutiae().isEmpty()) {
+                text.append(' ');
+            }
             return;
         }
         if (node instanceof NonTerminalNode parent) {
