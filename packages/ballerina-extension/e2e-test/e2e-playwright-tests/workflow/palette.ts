@@ -176,6 +176,15 @@ export async function paletteItem(sidePanel: SidePanel, section: string, label: 
         await sidePanel.expandSection(section);
     }
     if (!await shows(30000)) {
+        // The section's items are fetched after the headers and are not always there to expand into; the
+        // palette's search asks the language server for the item by name and lists what it finds.
+        const search = panel.locator('input[placeholder*="Search"], input[type="text"]').first();
+        if (await search.isVisible().catch(() => false)) {
+            await search.fill(label);
+            if (await shows(30000)) {
+                return item;
+            }
+        }
         const shown = (await panel.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
         throw new Error(`the palette does not offer ${label} under ${section}; the panel shows: ${shown}`);
     }

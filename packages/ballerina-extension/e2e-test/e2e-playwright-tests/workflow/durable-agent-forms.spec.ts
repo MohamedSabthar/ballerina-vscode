@@ -41,7 +41,8 @@ async function backToOverview(): Promise<void> {
     await projectExplorer.init();
     await projectExplorer.goToOverview(DEFAULT_PROJECT_NAME);
     const webview = await getWebview();
-    await webview.getByText('billingAgent', { exact: true }).first().waitFor({ timeout: 90000 });
+    // Filtered to the visible one: a dropdown of a form still mounted holds a hidden option of the same text.
+    await webview.getByText('billingAgent', { exact: true }).filter({ visible: true }).first().waitFor({ timeout: 90000 });
 }
 
 // Opens an artifact's diagram by its name: from the integration overview when it shows the name, else from
@@ -65,16 +66,16 @@ async function openFromOverview(webview: Frame, name: string, ready: Locator): P
     await ready.waitFor({ state: 'visible', timeout: 60000 });
 }
 
-// Saves the open form and waits for the panel to close. A form that stays open was refused, and the field
-// messages say why: fail on them rather than on a silent timeout.
 // Fills an expression-mode field and waits for the form to hold the value: the editor is written through
 // CodeMirror, and a Save that follows too soon reaches the language server with the field still blank
-// (seen as "Name who may decide this: fill in the roles, the users, or both" on the roles field).
+// (seen as "Name who may decide this: fill in the roles, the users, or both" on the roles field). The
+// form's own sign that it has taken the value is Save becoming enabled again after its validation pass.
 async function fillExpression(webview: Frame, key: string, value: string): Promise<void> {
     await fillExEditor(webview, key, value);
     await page.page.keyboard.press('Tab');
     await expect.poll(() => exEditorText(webview, key), { timeout: 15000 }).toBe(value);
-    await page.page.waitForTimeout(800);
+    const saveButton = webview.getByTestId('side-panel').getByRole('button', { name: 'Save' }).first();
+    await expect.poll(() => saveButton.getAttribute('disabled'), { timeout: 30000 }).toBeNull();
 }
 
 // Clicks one of the agent box's add-affordances. They are drawn only while the canvas is not read-only,
@@ -87,6 +88,8 @@ async function clickAffordance(webview: Frame, kind: 'event' | 'humanTask'): Pro
     await affordance.click({ force: true });
 }
 
+// Saves the open form and waits for the panel to close. A form that stays open was refused, and the field
+// messages say why: fail on them rather than on a silent timeout.
 async function saveForm(panel: Locator, frame?: Frame): Promise<void> {
     const saveButton = panel.getByRole('button', { name: 'Save' }).first();
     await saveButton.waitFor({ state: 'visible', timeout: 60000 });
