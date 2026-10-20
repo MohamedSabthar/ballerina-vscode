@@ -214,6 +214,8 @@ export default function createTests() {
             await (await workflowPaletteItem(sidePanel, 'Send Agent Data Event')).click({ force: true });
             const panel = webview.getByTestId('side-panel');
             await selectDropdown(panel, /Durable Agentic Workflow/, 'supportAgent');
+            // Instance Id opens in text mode, which would quote the parameter's name.
+            await switchToExpression(panel, 'agentId');
             await fillExEditor(webview, 'agentId', 'workflowId');
             await selectDropdown(panel, /Data Event/, 'bill');
             await fillExEditor(webview, 'data', 'payload');
@@ -226,6 +228,8 @@ export default function createTests() {
             sidePanel = await openPaletteBelow(webview, 'Send Agent Data Event');
             await (await workflowPaletteItem(sidePanel, 'Send Agent Data Event')).click({ force: true });
             await selectDropdown(panel, /Durable Agentic Workflow/, 'supportAgent');
+            // Instance Id opens in text mode, which would quote the parameter's name.
+            await switchToExpression(panel, 'agentId');
             await fillExEditor(webview, 'agentId', 'workflowId');
             await selectDropdown(panel, /Data Event/, 'chat');
             await fillExEditor(webview, 'data', '"hello"');
