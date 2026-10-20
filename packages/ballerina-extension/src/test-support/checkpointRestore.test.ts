@@ -77,13 +77,26 @@ function answerDeletionPrompt(choice = 0): void {
 
 const realSetImmediate = setImmediate;
 
-/** Lets the restore's promise chain, and the blob reads it awaits, run to its next timer-bound step under fake timers. */
-async function settle(): Promise<void> {
-    for (let i = 0; i < 200; i++) {
-        await Promise.resolve();
+/** Yields to real I/O (blob reads, hashing) until the condition holds; fake timers never advance here. */
+async function waitUntil(condition: () => boolean, what: string): Promise<void> {
+    for (let i = 0; i < 20_000; i++) {
+        if (condition()) {
+            return;
+        }
         await new Promise(resolve => realSetImmediate(resolve));
     }
+    throw new Error(`Timed out waiting for ${what}`);
 }
+
+function track<T>(promise: Promise<T>): { promise: Promise<T>; settled: () => boolean } {
+    let done = false;
+    const tracked = promise.finally(() => { done = true; });
+    return { promise: tracked, settled: () => done };
+}
+
+const hasArtifactSubscriber = () =>
+    (ArtifactNotificationHandler.getInstance() as unknown as { subscribers: Map<string, unknown> })
+        .subscribers.has(ArtifactsUpdated.method);
 
 /** The handler is a process-wide singleton; drop any subscription an earlier test abandoned. */
 function resetArtifactSubscribers(): void {
@@ -203,11 +216,11 @@ describe.each(KINDS)("checkpoint restore outcome vs. the artifact-update notific
     });
 
     it("reports the restore as successful when no artifact update ever arrives", async () => {
-        const restore = restoreWorkspaceSnapshot(checkpoint);
-        await settle();
+        const restore = track(restoreWorkspaceSnapshot(checkpoint));
+        await waitUntil(() => hasArtifactSubscriber() || restore.settled(), "the restore to wait for artifacts");
         await jest.advanceTimersByTimeAsync(10_000);
 
-        await expect(restore).resolves.toBe(true);
+        await expect(restore.promise).resolves.toBe(true);
         expect(fs.readFileSync(path.join(root, "Config.toml"), "utf8")).toBe(ORIGINAL_CONFIG);
         expect(fs.existsSync(path.join(root, "extra.txt"))).toBe(false);
     });
@@ -219,35 +232,31 @@ describe.each(KINDS)("checkpoint restore outcome vs. the artifact-update notific
             return Promise.resolve(true);
         };
 
-        let settledWithoutTimeout = false;
-        const restore = restoreWorkspaceSnapshot(checkpoint).then(result => {
-            settledWithoutTimeout = true;
-            return result;
-        });
-        await settle();
+        // No fake timer is advanced, so a missed update would leave the restore waiting until this times out.
+        const restore = track(restoreWorkspaceSnapshot(checkpoint));
+        await waitUntil(restore.settled, "the restore to settle without its artifact timeout");
 
-        expect(settledWithoutTimeout).toBe(true);
-        await expect(restore).resolves.toBe(true);
+        await expect(restore.promise).resolves.toBe(true);
         expect(artifactLocationUpdates).toEqual([{ artifacts: [{ id: "svc" }] }]);
     });
 
     it("forwards the artifacts to the visualizer when the update arrives after the edits", async () => {
-        const restore = restoreWorkspaceSnapshot(checkpoint);
-        await settle();
+        const restore = track(restoreWorkspaceSnapshot(checkpoint));
+        await waitUntil(hasArtifactSubscriber, "the restore to wait for artifacts");
         publishArtifactsUpdated();
-        await settle();
+        await waitUntil(restore.settled, "the restore to settle after the update");
 
-        await expect(restore).resolves.toBe(true);
+        await expect(restore.promise).resolves.toBe(true);
         expect(artifactLocationUpdates).toEqual([{ artifacts: [{ id: "svc" }] }]);
     });
 
     it("reports failure when the workspace edit itself does not apply, and stops listening", async () => {
         workspace.applyEdit = () => Promise.resolve(false);
 
-        const restore = restoreWorkspaceSnapshot(checkpoint);
-        await settle();
+        const restore = track(restoreWorkspaceSnapshot(checkpoint));
+        await waitUntil(restore.settled, "the failed restore to settle");
 
-        await expect(restore).resolves.toBe(false);
+        await expect(restore.promise).resolves.toBe(false);
 
         publishArtifactsUpdated();
         await jest.advanceTimersByTimeAsync(10_000);

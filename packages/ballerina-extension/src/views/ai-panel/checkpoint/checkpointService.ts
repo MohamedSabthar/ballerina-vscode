@@ -225,16 +225,14 @@ export class CheckpointService {
             return undefined;
         }
         const storage = cp.storage as { kind?: unknown; files?: unknown } | undefined;
-        if (storage === undefined) {
-            return this.backends.get('inline');
-        }
-        if (storage.kind === 'inline' && !isRecord(cp.workspaceSnapshot)) {
+        const kind = storage === undefined ? 'inline' : storage.kind;
+        if (kind === 'inline' && !isRecord(cp.workspaceSnapshot)) {
             return undefined;
         }
-        if (storage.kind === 'content-store' && !isRecord(storage.files)) {
+        if (kind === 'content-store' && !isRecord(storage?.files)) {
             return undefined;
         }
-        return typeof storage.kind === 'string' ? this.backends.get(storage.kind) : undefined;
+        return typeof kind === 'string' ? this.backends.get(kind) : undefined;
     }
 
     private async planRestore(

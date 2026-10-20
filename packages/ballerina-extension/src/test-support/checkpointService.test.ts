@@ -233,6 +233,8 @@ describe("CheckpointService", () => {
             ["a newer schema", { schemaVersion: 3, storage: { kind: "inline" }, workspaceSnapshot: {} }],
             ["an unknown storage kind", { storage: { kind: "journal" } as never }],
             ["an inline checkpoint without a snapshot object", { storage: { kind: "inline" }, workspaceSnapshot: "x" as never }],
+            ["a storage-less checkpoint with a string snapshot", { workspaceSnapshot: "abc" as never }],
+            ["a storage-less checkpoint without a snapshot", {}],
             ["a content-store checkpoint without a files object", { storage: { kind: "content-store", files: null } as never }],
         ])("refuses %s before touching anything", async (_name, shape) => {
             fs.writeFileSync(at("added-by-hand.csv"), "id\n");
