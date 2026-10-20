@@ -225,7 +225,9 @@ export default function createTests() {
                 .toMatch(/_ = check supportAgent\.sendData\(workflowId, "bill", payload\);/);
 
             logStep('Send on chat, which declares a response: the token is bound');
-            sidePanel = await openPaletteBelow(webview, 'Send Agent Data Event');
+            // Below Start again: the saved node's label wraps in its box, so its text is not matched whole,
+            // and the order of the two sends in the function does not matter to the checks.
+            sidePanel = await openPaletteBelow(webview, 'Start');
             await (await workflowPaletteItem(sidePanel, 'Send Agent Data Event')).click({ force: true });
             await selectDropdown(panel, /Durable Agentic Workflow/, 'supportAgent');
             // Instance Id opens in text mode, which would quote the parameter's name.
