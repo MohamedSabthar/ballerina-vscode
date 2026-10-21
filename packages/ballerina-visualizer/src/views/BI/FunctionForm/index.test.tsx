@@ -445,9 +445,11 @@ describe("FunctionForm save after an in-place rename", () => {
     });
 
     /** A parameter loaded from source as `person`, now named `name` in the form. Its name is
-     *  renamed in place unless `identifierEditable` (as for data mappers, whose names the save rewrites). */
+     *  renamed in place unless `identifierEditable` (as for data mappers, whose names the save rewrites).
+     *  As after an edit, `key` already follows the new name and only `loadedKey` keeps the old one. */
     const loadedParam = (name: string, identifierEditable = false) => ({
-        key: "person",
+        key: name,
+        loadedKey: "person",
         identifierEditable,
         identifierRange: { fileName: "data_mappings.bal", startLine: { line: 4, offset: 30 }, endLine: { line: 4, offset: 36 } },
         formValues: { type: "Person", variable: name },

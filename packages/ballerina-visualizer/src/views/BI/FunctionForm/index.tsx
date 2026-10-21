@@ -410,14 +410,15 @@ export function FunctionForm(props: FunctionFormProps) {
     // agent creation that declared the provider. Failures are non-fatal: the agent is already
     // created and the provider can be configured from the agent's model circle.
     /** Whether a parameter whose name is renamed in place through the LS (a read-only identifier
-     *  with a source range) now carries a different name than the key it loaded under. A parameter
-     *  with an editable name is only rewritten by the save, so its edits leave the range intact. */
+     *  with a source range) now carries a different name than the key it loaded under. `key` follows
+     *  the edited name, so the comparison is against `loadedKey`. A parameter with an editable name
+     *  is only rewritten by the save, so its edits leave the range intact. */
     const hasRenamedParameter = (parameters: unknown) =>
         Array.isArray(parameters) &&
         (parameters as Parameter[]).some((param) => {
             const name = param?.formValues?.variable;
-            return param?.identifierEditable === false && !!param.identifierRange && !!param.key &&
-                typeof name === "string" && !!name && name !== param.key;
+            return param?.identifierEditable === false && !!param.identifierRange && !!param.loadedKey &&
+                typeof name === "string" && !!name && name !== param.loadedKey;
         });
 
     const configureWso2ModelProvider = async () => {
