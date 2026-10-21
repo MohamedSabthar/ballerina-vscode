@@ -27,14 +27,16 @@ import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import java.io.IOException;
+import java.lang.ref.Reference;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Tests that {@link PackageUtil#getCompilation(Project)} compiles a project under the lock its owner registered.
+ * Tests that {@link PackageUtil#getCompilation(Project)} compiles a project under the lock its owner guards it with.
  *
  * <p>The compiler does not support two first-time compilations of the same project at once: both add to the
  * project's compiler plugin contexts, an unsynchronized list. The workspace manager compiles its projects under its
@@ -44,11 +46,13 @@ public class PackageUtilCompilationLockTest {
 
     private static final long WAIT_MILLIS = TimeUnit.SECONDS.toMillis(30);
 
-    @Test(description = "A compilation waits while the project's registered lock is held, and completes after")
-    public void testCompilationWaitsForRegisteredLock() throws Exception {
+    @Test(description = "A compilation waits while the owner's lock for the project is held, and completes after")
+    public void testCompilationWaitsForOwnerLock() throws Exception {
         Project project = SingleFileProject.load(singleFile());
         ReentrantLock ownerLock = new ReentrantLock(true);
-        ProjectLocks.register(project, ownerLock);
+        // ProjectLocks holds owners weakly; the local keeps this one reachable until the fence below.
+        ProjectLocks.Owner owner = candidate -> candidate == project ? Optional.of(ownerLock) : Optional.empty();
+        ProjectLocks.addOwner(owner);
 
         CompletableFuture<PackageCompilation> compilation;
         ownerLock.lock();
@@ -62,10 +66,11 @@ public class PackageUtilCompilationLockTest {
         }
 
         Assert.assertNotNull(compilation.get(WAIT_MILLIS, TimeUnit.MILLISECONDS));
+        Reference.reachabilityFence(owner);
     }
 
-    @Test(description = "A project no owner registered still compiles")
-    public void testUnregisteredProjectCompiles() throws IOException {
+    @Test(description = "A project no owner holds still compiles; the fallback lock itself is not observed here")
+    public void testProjectWithoutOwnerCompiles() throws IOException {
         Project project = SingleFileProject.load(singleFile());
         Assert.assertTrue(ProjectLocks.of(project).isEmpty());
         Assert.assertNotNull(PackageUtil.getCompilation(project));
@@ -84,7 +89,7 @@ public class PackageUtilCompilationLockTest {
         long deadline = System.currentTimeMillis() + WAIT_MILLIS;
         while (!lock.hasQueuedThreads()) {
             if (System.currentTimeMillis() > deadline) {
-                Assert.fail("The compilation never waited on the project's registered lock");
+                Assert.fail("The compilation never waited on the owner's lock for the project");
             }
             Thread.sleep(10);
         }

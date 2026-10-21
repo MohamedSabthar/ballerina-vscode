@@ -183,7 +183,7 @@ public class TestWorkspaceManager {
 
     @Test(dataProvider = "fileOpenUpdateTestDataProvider")
     public void testProjectLockIsShared(Path filePath) throws WorkspaceDocumentException {
-        // Code outside the workspace manager compiles its projects under this lock, so it has to stay registered
+        // Code outside the workspace manager compiles its projects under this lock, so it has to be the one found
         // for whatever project instance the context holds, before and after an edit.
         openFile(filePath);
         assertProjectLockShared(filePath);
@@ -195,12 +195,40 @@ public class TestWorkspaceManager {
         assertProjectLockShared(filePath);
     }
 
+    @Test(dataProvider = "workspaceReloadTomlDataProvider")
+    public void testProjectLockIsSharedAfterWorkspaceReload(Path changedToml) throws WorkspaceDocumentException {
+        // A workspace reload puts new contexts into the map for every package, while the context that handled the
+        // event keeps the same project instances; the lock has to follow the context the map holds.
+        Path packageFile = RESOURCE_DIRECTORY.resolve("workspace-projects").resolve("simple-workspace")
+                .resolve("package-a").resolve("main.bal").toAbsolutePath();
+        openFile(packageFile);
+
+        workspaceManager.didChangeWatched(changedToml,
+                new FileEvent(changedToml.toUri().toString(), FileChangeType.Changed));
+
+        Assert.assertFalse(workspaceManager.sourceRootToProject.isEmpty());
+        workspaceManager.sourceRootToProject.forEach((root, projectContext) -> {
+            Optional<Lock> lock = ProjectLocks.of(projectContext.project());
+            Assert.assertTrue(lock.isPresent(), "No lock found for the project at " + root);
+            Assert.assertSame(lock.get(), projectContext.locker(), "Lock drifted for the project at " + root);
+        });
+    }
+
+    @DataProvider
+    public Object[] workspaceReloadTomlDataProvider() {
+        Path workspace = RESOURCE_DIRECTORY.resolve("workspace-projects").resolve("simple-workspace");
+        return new Path[]{
+                workspace.resolve("package-a").resolve(ProjectConstants.BALLERINA_TOML).toAbsolutePath(),
+                workspace.resolve(ProjectConstants.BALLERINA_TOML).toAbsolutePath()
+        };
+    }
+
     private void assertProjectLockShared(Path filePath) {
         BallerinaWorkspaceManager.ProjectContext projectContext =
                 workspaceManager.sourceRootToProject.get(workspaceManager.projectRoot(filePath));
-        Optional<Lock> registered = ProjectLocks.of(projectContext.project());
-        Assert.assertTrue(registered.isPresent(), "No lock registered for the project of " + filePath);
-        Assert.assertSame(registered.get(), projectContext.locker());
+        Optional<Lock> lock = ProjectLocks.of(projectContext.project());
+        Assert.assertTrue(lock.isPresent(), "No lock found for the project of " + filePath);
+        Assert.assertSame(lock.get(), projectContext.locker());
     }
 
     @Test

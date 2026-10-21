@@ -149,6 +149,11 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
     protected final LSClientLogger clientLogger;
     private final LanguageServerContext serverContext;
     private final Set<Path> openedDocuments = ConcurrentHashMap.newKeySet();
+    /**
+     * Answers {@link ProjectLocks} from the project map. {@link ProjectLocks} holds it weakly, so this field keeps it
+     * alive exactly as long as this workspace manager.
+     */
+    private final ProjectLocks.Owner projectLockOwner = this::projectLock;
 
     public BallerinaWorkspaceManager(LanguageServerContext serverContext) {
         this.serverContext = serverContext;
@@ -160,6 +165,7 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
         this.pathToSourceRootCache = cache.asMap();
         this.sourceRootToProject = new SourceRootToProjectMap<>(pathToSourceRootCache);
         this.projectLockMap = new ConcurrentHashMap<>();
+        ProjectLocks.addOwner(projectLockOwner);
 
         // We are only doing a best effort cleanup here. If we held a strong reference to the map
         // GC will not be able to clean the projects. It impacts tests since all run in the same JVM.
@@ -1550,6 +1556,22 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
         return Optional.ofNullable(sourceRootToProject.get(projectRoot));
     }
 
+    /**
+     * Returns the lock of the context the project map holds for this project instance. A context that has dropped
+     * out of the map (replaced on a reload, or created only for its project) does not count, even when it still
+     * holds the same instance.
+     *
+     * @param project the project instance
+     * @return the lock, or empty when the map does not hold this instance
+     */
+    private Optional<Lock> projectLock(Project project) {
+        ProjectContext projectContext = sourceRootToProject.get(project.sourceRoot());
+        if (projectContext == null || projectContext.project() != project) {
+            return Optional.empty();
+        }
+        return Optional.of(projectContext.locker());
+    }
+
     private Optional<ProjectContext> createProjectContext(Path filePath, String operationName) {
         Project project = createProject(filePath, operationName);
         if (project == null) {
@@ -1721,7 +1743,6 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
             this.project = project;
             this.lock = lock;
             this.compilationCrashed = false;
-            ProjectLocks.register(project, lock);
         }
 
         public static ProjectContext from(Project project) {
@@ -1767,7 +1788,6 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
          */
         public void setProject(Project project) {
             this.project = project;
-            ProjectLocks.register(project, this.lock);
         }
 
         /**
