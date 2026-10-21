@@ -482,13 +482,20 @@ export interface ResourceMetadata {
     resourcePath: string;
 }
 
+/** Metadata for a non-resource service member: a remote function or a plain method. */
+export interface ServiceMemberMetadata {
+    name: string;
+    servicePath: string;
+    functionKind?: "remote";
+}
+
 export interface SemanticDiff {
     changeType: number; // API returns numeric value
     nodeKind: number;   // API returns numeric value
     uri: string;
     lineRange: LineRange;
     previousLineRange?: LineRange;
-    metadata?: ResourceMetadata | IdentifierMetadata;
+    metadata?: ResourceMetadata | ServiceMemberMetadata | IdentifierMetadata;
 }
 
 export interface SemanticDiffResponse {

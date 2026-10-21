@@ -36,13 +36,24 @@ const NODE_KIND_LABELS: Record<number, string> = {
 };
 
 export function getNodeKindLabel(nodeKind: number, metadata?: SemanticDiff["metadata"]): string {
-    // OBJECT_FUNCTION covers both service resource/remote members and plain class
-    // methods; only the former carry resource metadata (accessor/servicePath).
-    if (nodeKind === NodeKindEnum.OBJECT_FUNCTION
-        && !(metadata as { accessor?: string } | undefined)?.accessor) {
-        return "method";
+    if (nodeKind === NodeKindEnum.OBJECT_FUNCTION) {
+        return getObjectFunctionLabel(metadata);
     }
     return NODE_KIND_LABELS[nodeKind] ?? "component";
+}
+
+// OBJECT_FUNCTION covers resource and remote functions and plain methods; only resources
+// carry an accessor. An older LS also sent remote functions with the function name as the
+// accessor and an empty resource path.
+function getObjectFunctionLabel(metadata?: SemanticDiff["metadata"]): string {
+    const m = metadata as { accessor?: string; resourcePath?: string; functionKind?: string } | undefined;
+    if (m?.functionKind === "remote") {
+        return "remote";
+    }
+    if (!m?.accessor) {
+        return "method";
+    }
+    return m.resourcePath ? NODE_KIND_LABELS[NodeKindEnum.OBJECT_FUNCTION] : "remote";
 }
 
 /**

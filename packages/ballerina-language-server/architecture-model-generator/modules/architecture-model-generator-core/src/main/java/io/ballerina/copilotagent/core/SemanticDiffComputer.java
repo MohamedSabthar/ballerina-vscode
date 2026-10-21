@@ -39,6 +39,7 @@ import io.ballerina.compiler.syntax.tree.NonTerminalNode;
 import io.ballerina.compiler.syntax.tree.OnFailClauseNode;
 import io.ballerina.compiler.syntax.tree.ServiceDeclarationNode;
 import io.ballerina.compiler.syntax.tree.StatementNode;
+import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.compiler.syntax.tree.TransactionStatementNode;
 import io.ballerina.compiler.syntax.tree.TypeDefinitionNode;
@@ -812,7 +813,7 @@ public class SemanticDiffComputer {
 
                 originalServiceMemberMap.getObjectMethods().forEach((key, originalMethod) -> {
                     LineRange lineRange = originalMethod.lineRange();
-                    Map<String, String> metadata = buildResourceFunctionMetadata(originalMethod, servicePath);
+                    Map<String, String> metadata = buildServiceMemberMetadata(originalMethod, servicePath);
                     SemanticDiff diff = new SemanticDiff(ChangeType.DELETION, NodeKind.OBJECT_FUNCTION,
                             resolveUri(lineRange.fileName()), lineRange, metadata);
                     this.semanticDiffs.add(diff);
@@ -834,7 +835,7 @@ public class SemanticDiffComputer {
 
             modifiedServiceMemberMap.getObjectMethods().forEach((key, modifiedMethod) -> {
                 LineRange lineRange = modifiedMethod.lineRange();
-                Map<String, String> metadata = buildResourceFunctionMetadata(modifiedMethod, servicePath);
+                Map<String, String> metadata = buildServiceMemberMetadata(modifiedMethod, servicePath);
                 SemanticDiff diff = new SemanticDiff(ChangeType.ADDITION, NodeKind.OBJECT_FUNCTION,
                         resolveUri(lineRange.fileName()), lineRange, metadata);
                 this.semanticDiffs.add(diff);
@@ -889,7 +890,7 @@ public class SemanticDiffComputer {
         originalMethods.forEach((key, originalMethod) -> {
             if (!modifiedMethods.containsKey(key)) {
                 LineRange lineRange = originalMethod.lineRange();
-                Map<String, String> metadata = buildResourceFunctionMetadata(originalMethod, servicePath);
+                Map<String, String> metadata = buildServiceMemberMetadata(originalMethod, servicePath);
                 SemanticDiff diff = new SemanticDiff(ChangeType.DELETION, NodeKind.OBJECT_FUNCTION,
                         resolveUri(lineRange.fileName()), lineRange, metadata);
                 this.semanticDiffs.add(diff);
@@ -897,7 +898,7 @@ public class SemanticDiffComputer {
             }
         });
         modifiedMethods.forEach((key, modifiedMethod) -> {
-            Map<String, String> metadata = buildResourceFunctionMetadata(modifiedMethod, servicePath);
+            Map<String, String> metadata = buildServiceMemberMetadata(modifiedMethod, servicePath);
             if (originalMethods.containsKey(key)) {
                 FunctionDefinitionNode originalMethod = originalMethods.get(key);
                 compareFunctionBodies(originalMethod, modifiedMethod, NodeKind.OBJECT_FUNCTION, metadata);
@@ -1129,8 +1130,19 @@ public class SemanticDiffComputer {
         return Map.of("name", functionName);
     }
 
-    private static Map<String, String> buildResourceFunctionMetadata(FunctionDefinitionNode functionNode,
-                                                                     String servicePath) {
+    private static Map<String, String> buildServiceMemberMetadata(FunctionDefinitionNode functionNode,
+                                                                  String servicePath) {
+
+        // Only resource functions have an accessor and a resource path; other members are identified by name.
+        if (!hasQualifier(functionNode, SyntaxKind.RESOURCE_KEYWORD)) {
+            Map<String, String> metadata = new LinkedHashMap<>();
+            metadata.put("name", functionNode.functionName().text());
+            metadata.put("servicePath", servicePath);
+            if (hasQualifier(functionNode, SyntaxKind.REMOTE_KEYWORD)) {
+                metadata.put("functionKind", "remote");
+            }
+            return metadata;
+        }
 
         String accessor = functionNode.functionName().text();
         String resourcePath = functionNode.relativeResourcePath().stream()
@@ -1141,6 +1153,11 @@ public class SemanticDiffComputer {
         metadata.put("servicePath", servicePath);
         metadata.put("resourcePath", resourcePath);
         return metadata;
+    }
+
+    private static boolean hasQualifier(FunctionDefinitionNode functionNode, SyntaxKind qualifier) {
+
+        return functionNode.qualifierList().stream().anyMatch(token -> token.kind() == qualifier);
     }
 
     private static String getServicePath(ServiceDeclarationNode service) {

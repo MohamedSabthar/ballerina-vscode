@@ -341,10 +341,11 @@ function getFileName(filePath: string): string {
 function getDiffLabel(diff: SemanticDiff): string {
     if (diff.metadata) {
         if (diff.nodeKind === NODE_KIND_RESOURCE) {
-            // Class methods are OBJECT_FUNCTION diffs too but carry only `name` —
-            // fall through to it when there's no resource path.
-            const m = diff.metadata as { accessor?: string; servicePath?: string; resourcePath?: string };
+            // Remote functions and methods carry `name` instead of a resource path.
+            const m = diff.metadata as { accessor?: string; resourcePath?: string; name?: string };
             if (m.resourcePath) return m.resourcePath;
+            // An older LS sent a remote function's name as the accessor.
+            if (!m.name && m.accessor) return m.accessor;
         }
         const m = diff.metadata as { name?: string };
         if (m.name) return m.name;
