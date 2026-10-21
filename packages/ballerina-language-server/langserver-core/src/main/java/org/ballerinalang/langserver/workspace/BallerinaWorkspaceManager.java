@@ -56,6 +56,7 @@ import org.ballerinalang.langserver.commons.LanguageServerContext;
 import org.ballerinalang.langserver.commons.client.ExtendedLanguageClient;
 import org.ballerinalang.langserver.commons.eventsync.EventKind;
 import org.ballerinalang.langserver.commons.eventsync.exceptions.EventSyncException;
+import org.ballerinalang.langserver.commons.workspace.ProjectLocks;
 import org.ballerinalang.langserver.commons.workspace.RunContext;
 import org.ballerinalang.langserver.commons.workspace.RunResult;
 import org.ballerinalang.langserver.commons.workspace.WorkspaceDocumentException;
@@ -1720,6 +1721,7 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
             this.project = project;
             this.lock = lock;
             this.compilationCrashed = false;
+            ProjectLocks.register(project, lock);
         }
 
         public static ProjectContext from(Project project) {
@@ -1765,6 +1767,7 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
          */
         public void setProject(Project project) {
             this.project = project;
+            ProjectLocks.register(project, this.lock);
         }
 
         /**

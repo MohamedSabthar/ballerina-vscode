@@ -48,6 +48,7 @@ import org.ballerinalang.langserver.LSClientLogger;
 import org.ballerinalang.langserver.common.utils.CommonUtil;
 import org.ballerinalang.langserver.commons.BallerinaCompilerApi;
 import org.ballerinalang.langserver.commons.eventsync.exceptions.EventSyncException;
+import org.ballerinalang.langserver.commons.workspace.ProjectLocks;
 import org.ballerinalang.langserver.commons.workspace.WorkspaceDocumentException;
 import org.ballerinalang.langserver.commons.workspace.WorkspaceManager;
 import org.eclipse.lsp4j.MessageType;
@@ -63,6 +64,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -789,13 +791,18 @@ public class PackageUtil {
 
     /**
      * Safely retrieves compilation from a project using a lock to ensure thread safety.
+     * <p>
+     * A project the workspace manager holds is compiled under the workspace manager's own lock for it: the
+     * workspace manager compiles the same instance (diagnostics, for one), and a separate lock here would let the
+     * two compilations run at once, which the compiler does not support.
      *
      * @param balPackage The package from which to retrieve the compilation
      * @return The compilation of the project
      */
     public static PackageCompilation getCompilation(Package balPackage) {
-        Path id = balPackage.project().sourceRoot();
-        ReentrantLock lock = PROJECT_LOCKS.computeIfAbsent(id, k -> new ReentrantLock());
+        Project project = balPackage.project();
+        Lock lock = ProjectLocks.of(project)
+                .orElseGet(() -> PROJECT_LOCKS.computeIfAbsent(project.sourceRoot(), k -> new ReentrantLock()));
         lock.lock();
         try {
             return balPackage.getCompilation();

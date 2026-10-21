@@ -42,6 +42,7 @@ import org.ballerinalang.langserver.commons.client.ExtendedLanguageClient;
 import org.ballerinalang.langserver.commons.command.CommandArgument;
 import org.ballerinalang.langserver.commons.command.LSCommandExecutorException;
 import org.ballerinalang.langserver.commons.eventsync.exceptions.EventSyncException;
+import org.ballerinalang.langserver.commons.workspace.ProjectLocks;
 import org.ballerinalang.langserver.commons.workspace.WorkspaceDocumentException;
 import org.ballerinalang.langserver.contexts.LanguageServerContextImpl;
 import org.ballerinalang.langserver.extensions.ballerina.document.ExecutorPositionsUtil;
@@ -79,6 +80,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 
 import static org.awaitility.Awaitility.await;
 
@@ -177,6 +179,28 @@ public class TestWorkspaceManager {
         Optional<Document> document = workspaceManager.document(filePath);
         Assert.assertNotNull(document.get());
         Assert.assertEquals(document.get().syntaxTree().textDocument().toString(), dummyDidChangeContent);
+    }
+
+    @Test(dataProvider = "fileOpenUpdateTestDataProvider")
+    public void testProjectLockIsShared(Path filePath) throws WorkspaceDocumentException {
+        // Code outside the workspace manager compiles its projects under this lock, so it has to stay registered
+        // for whatever project instance the context holds, before and after an edit.
+        openFile(filePath);
+        assertProjectLockShared(filePath);
+
+        DidChangeTextDocumentParams params = new DidChangeTextDocumentParams();
+        params.setTextDocument(new VersionedTextDocumentIdentifier(filePath.toUri().toString(), 1));
+        params.getContentChanges().add(new TextDocumentContentChangeEvent(dummyDidChangeContent));
+        workspaceManager.didChange(filePath, params);
+        assertProjectLockShared(filePath);
+    }
+
+    private void assertProjectLockShared(Path filePath) {
+        BallerinaWorkspaceManager.ProjectContext projectContext =
+                workspaceManager.sourceRootToProject.get(workspaceManager.projectRoot(filePath));
+        Optional<Lock> registered = ProjectLocks.of(projectContext.project());
+        Assert.assertTrue(registered.isPresent(), "No lock registered for the project of " + filePath);
+        Assert.assertSame(registered.get(), projectContext.locker());
     }
 
     @Test
