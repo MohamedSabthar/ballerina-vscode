@@ -264,6 +264,7 @@ describe('ContentStoreBackend', () => {
             get: i => store.get(i),
             sweep: (l, a) => store.sweep(l, a),
             exists: () => store.exists(),
+            remove: i => store.remove(i),
             touch: async i => {
                 const ok = await store.touch(i);
                 if (i === id && firstTouch) {
@@ -311,19 +312,36 @@ describe('ContentStoreBackend', () => {
         await expect(backend.resolve(cp, ['main.bal'])).rejects.toBeInstanceOf(CheckpointContentUnavailableError);
     });
 
-    it('converges: a too-large first capture throws, the retry stores only the rest', async () => {
+    const writeOverLimit = (prefix: string) => {
         const fileSize = LIMITS.maxFileSize - 24;
         const count = Math.ceil((LIMITS.maxNewBytes * 1.5) / fileSize);
         for (let i = 0; i < count; i++) {
-            write(`f${String(i).padStart(4, '0')}.bin`, randomBytes(fileSize));
+            write(`${prefix}${String(i).padStart(4, '0')}.bin`, randomBytes(fileSize));
         }
+    };
+    const blobCount = () => fs.existsSync(storeDir)
+        ? fs.readdirSync(storeDir).flatMap(shard => fs.readdirSync(path.join(storeDir, shard))).filter(f => !f.endsWith('.tmp')).length
+        : 0;
 
-        await expect(captureCp()).rejects.toBeInstanceOf(CheckpointTooLargeError);
+    it('takes the full baseline when there is no previous checkpoint, whatever maxNewBytes says', async () => {
+        writeOverLimit('f');
+
         const { result } = await captureCp();
 
-        expect(result.newBytes).toBeLessThanOrEqual(LIMITS.maxNewBytes);
-        expect(result.newBytes).toBeGreaterThan(0);
+        expect(result.newBytes).toBeGreaterThan(LIMITS.maxNewBytes);
         expect(result.skipped).toEqual([]);
+    });
+
+    it('over the limit on top of a previous checkpoint: throws and removes only the blobs it created', async () => {
+        write('main.bal', '// main\n');
+        const { cp: previous } = await captureCp();
+        const baselineBlobs = blobCount();
+        writeOverLimit('g');
+
+        await expect(captureCp({ previous })).rejects.toBeInstanceOf(CheckpointTooLargeError);
+
+        expect(blobCount()).toBe(baselineBlobs);
+        expect(fs.existsSync(blobFile(hashOf(previous, 'main.bal')))).toBe(true);
     });
 
     it('falls back to the default limits when the given ones are not positive finite numbers', async () => {

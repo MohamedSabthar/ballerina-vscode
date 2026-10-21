@@ -115,6 +115,19 @@ export class FsBlobStore implements BlobStore {
         }
     }
 
+    async remove(id: string): Promise<void> {
+        if (!BLOB_ID.test(id)) {
+            return;
+        }
+        try {
+            await fs.promises.unlink(this.blobPath(id));
+        } catch (error) {
+            if (!isMissing(error)) {
+                throw error;
+            }
+        }
+    }
+
     async sweep(live: ReadonlySet<string>, minAgeMs: number): Promise<number> {
         let shards: string[];
         try {

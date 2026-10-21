@@ -64,6 +64,10 @@ export class ContentStoreBackend implements CheckpointBackend {
 
     async capture(ctx: CaptureContext): Promise<CaptureResult> {
         const limits = resolveCaptureLimits(ctx.limits);
+        // Without a checkpoint to build on, capping the baseline would leave the workspace unrevertible every turn.
+        if (!ctx.previous) {
+            limits.maxNewBytes = Number.MAX_SAFE_INTEGER;
+        }
         const files: Record<string, CheckpointFileEntry> = {};
         const counted = new Set<string>();
         let newBytes = 0;
@@ -73,17 +77,25 @@ export class ContentStoreBackend implements CheckpointBackend {
             }
         };
 
-        for (const chunk of inChunks(ctx.files)) {
-            const stored = await Promise.all(chunk.map(file => this.captureFile(file, ctx, limits)));
-            chunk.forEach((file, i) => {
-                files[file.path] = stored[i].entry;
-                newBytes += countOnce(stored[i], counted);
-            });
-            overLimit();
-        }
+        try {
+            for (const chunk of inChunks(ctx.files)) {
+                const stored = await Promise.all(chunk.map(file => this.captureFile(file, ctx, limits)));
+                chunk.forEach((file, i) => {
+                    files[file.path] = stored[i].entry;
+                    newBytes += countOnce(stored[i], counted);
+                });
+                overLimit();
+            }
 
-        newBytes += await this.restoreMissingBlobs(ctx.files, files, limits, counted);
-        overLimit();
+            newBytes += await this.restoreMissingBlobs(ctx.files, files, limits, counted);
+            overLimit();
+        } catch (error) {
+            if (error instanceof CheckpointTooLargeError) {
+                // `counted` holds exactly the blobs this capture created, so nothing an earlier checkpoint uses is removed.
+                await Promise.all([...counted].map(id => this.store.remove(id)));
+            }
+            throw error;
+        }
 
         const skipped: CaptureResult['skipped'] = [];
         for (const [p, entry] of Object.entries(files)) {

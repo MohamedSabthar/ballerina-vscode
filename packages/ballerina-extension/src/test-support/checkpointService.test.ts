@@ -194,10 +194,21 @@ describe("CheckpointService", () => {
             expect(getCheckpointService(projectRoot)).toBe(getCheckpointService(projectRoot));
         });
 
-        it("returns null and says so when the new content is over the limit", async () => {
+        it("takes the first checkpoint even when it is over the new-content limit", async () => {
             config.maxSnapshotSize = 8;
 
-            await expect(service().capture("msg-1")).resolves.toBeNull();
+            await expect(service().capture("msg-1")).resolves.not.toBeNull();
+
+            expect(notify.methods()).toEqual([]);
+        });
+
+        it("returns null and says so when a later turn adds too much new content", async () => {
+            const svc = service();
+            const previous = (await svc.capture("msg-1"))!;
+            config.maxSnapshotSize = 8;
+            fs.writeFileSync(at("main.bal"), "// a much larger edit than the limit allows\n");
+
+            await expect(svc.capture("msg-2", { previous })).resolves.toBeNull();
 
             expect(notify.methods()).toEqual(["tooLarge"]);
         });

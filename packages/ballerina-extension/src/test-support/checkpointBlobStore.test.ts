@@ -189,4 +189,15 @@ describe('FsBlobStore', () => {
         expect(await store.put(bytes)).toEqual({ id, created: true });
         expect(await store.get(id)).toEqual(bytes);
     });
+
+    it('remove deletes a blob, and ignores a missing or invalid id', async () => {
+        const store = new FsBlobStore(dir);
+        const { id } = await store.put(Buffer.from('to remove\n'));
+
+        await store.remove(id);
+        await store.remove(id);
+        await store.remove('../../etc/passwd');
+
+        expect(fs.existsSync(blobFile(id))).toBe(false);
+    });
 });
