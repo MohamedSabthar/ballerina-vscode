@@ -80,6 +80,9 @@ import java.util.stream.Collectors;
  */
 public class SemanticDiffComputer {
 
+    private static final String FUNCTION_KIND_KEY = "functionKind";
+    private static final String FUNCTION_KIND_RESOURCE = "resource";
+
     private final Project originalProject;
     private final Project modifiedProject;
     private final List<SemanticDiff> semanticDiffs = new ArrayList<>();
@@ -304,19 +307,20 @@ public class SemanticDiffComputer {
             Map<String, FunctionDefinitionNode> originalMethods = extractClassMethods(originalClass);
             Map<String, FunctionDefinitionNode> modifiedMethods = extractClassMethods(modifiedClass);
             for (Map.Entry<String, FunctionDefinitionNode> methodEntry : originalMethods.entrySet()) {
-                String methodKey = methodEntry.getKey();
+                String methodName = className + "." + methodEntry.getKey();
                 FunctionDefinitionNode originalMethod = methodEntry.getValue();
-                Map<String, String> metadata = buildFunctionMetadata(className + "." + methodKey);
-                if (!modifiedMethods.containsKey(methodKey)) {
-                    addDeletionDiff(NodeKind.OBJECT_FUNCTION, originalMethod.lineRange(), metadata);
+                FunctionDefinitionNode modifiedMethod = modifiedMethods.remove(methodEntry.getKey());
+                if (modifiedMethod == null) {
+                    addDeletionDiff(NodeKind.OBJECT_FUNCTION, originalMethod.lineRange(),
+                            buildClassMethodMetadata(methodName, originalMethod));
                     continue;
                 }
-                compareFunctionBodies(originalMethod, modifiedMethods.remove(methodKey),
-                        NodeKind.OBJECT_FUNCTION, metadata);
+                compareFunctionBodies(originalMethod, modifiedMethod, NodeKind.OBJECT_FUNCTION,
+                        buildClassMethodMetadata(methodName, modifiedMethod));
             }
             for (Map.Entry<String, FunctionDefinitionNode> methodEntry : modifiedMethods.entrySet()) {
                 addAdditionDiff(NodeKind.OBJECT_FUNCTION, methodEntry.getValue().lineRange(),
-                        buildFunctionMetadata(className + "." + methodEntry.getKey()));
+                        buildClassMethodMetadata(className + "." + methodEntry.getKey(), methodEntry.getValue()));
             }
 
             if (!classHeaderAndMembersSource(originalClass).equals(classHeaderAndMembersSource(modifiedClass))) {
@@ -1130,34 +1134,50 @@ public class SemanticDiffComputer {
         return Map.of("name", functionName);
     }
 
-    private static Map<String, String> buildServiceMemberMetadata(FunctionDefinitionNode functionNode,
-                                                                  String servicePath) {
+    private static Map<String, String> buildClassMethodMetadata(String methodName, FunctionDefinitionNode method) {
 
-        // Only resource functions have an accessor and a resource path; other members are identified by name.
-        if (!hasQualifier(functionNode, SyntaxKind.RESOURCE_KEYWORD)) {
-            Map<String, String> metadata = new LinkedHashMap<>();
-            metadata.put("name", functionNode.functionName().text());
-            metadata.put("servicePath", servicePath);
-            if (hasQualifier(functionNode, SyntaxKind.REMOTE_KEYWORD)) {
-                metadata.put("functionKind", "remote");
-            }
-            return metadata;
-        }
-
-        String accessor = functionNode.functionName().text();
-        String resourcePath = functionNode.relativeResourcePath().stream()
-                .map(node -> node.toSourceCode().trim())
-                .collect(Collectors.joining(""));
         Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("accessor", accessor);
-        metadata.put("servicePath", servicePath);
-        metadata.put("resourcePath", resourcePath);
+        metadata.put("name", methodName);
+        metadata.put(FUNCTION_KIND_KEY, getFunctionKind(method));
         return metadata;
     }
 
-    private static boolean hasQualifier(FunctionDefinitionNode functionNode, SyntaxKind qualifier) {
+    private static Map<String, String> buildServiceMemberMetadata(FunctionDefinitionNode functionNode,
+                                                                  String servicePath) {
 
-        return functionNode.qualifierList().stream().anyMatch(token -> token.kind() == qualifier);
+        String functionKind = getFunctionKind(functionNode);
+        Map<String, String> metadata = new LinkedHashMap<>();
+        // Only resource functions have an accessor and a resource path; other members are identified by name.
+        if (FUNCTION_KIND_RESOURCE.equals(functionKind)) {
+            metadata.put("accessor", functionNode.functionName().text());
+            metadata.put("servicePath", servicePath);
+            metadata.put("resourcePath", functionNode.relativeResourcePath().stream()
+                    .map(node -> node.toSourceCode().trim())
+                    .collect(Collectors.joining("")));
+        } else {
+            metadata.put("name", functionNode.functionName().text());
+            metadata.put("servicePath", servicePath);
+        }
+        metadata.put(FUNCTION_KIND_KEY, functionKind);
+        return metadata;
+    }
+
+    /**
+     * Returns the kind of a service or class member function: {@code resource}, {@code remote}, {@code init} or
+     * {@code method}.
+     */
+    private static String getFunctionKind(FunctionDefinitionNode functionNode) {
+
+        if (functionNode.kind() == SyntaxKind.RESOURCE_ACCESSOR_DEFINITION) {
+            return FUNCTION_KIND_RESOURCE;
+        }
+        if (functionNode.qualifierList().stream().anyMatch(token -> token.kind() == SyntaxKind.REMOTE_KEYWORD)) {
+            return "remote";
+        }
+        if ("init".equals(functionNode.functionName().text())) {
+            return "init";
+        }
+        return "method";
     }
 
     private static String getServicePath(ServiceDeclarationNode service) {

@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { NodeKindEnum, SemanticDiff } from "@wso2/ballerina-core";
+import { NodeKindEnum, ObjectFunctionKind, SemanticDiff } from "@wso2/ballerina-core";
 
 /**
  * Shared nodeKind wording for the review surfaces (ReviewMode + ReviewBar) — a deliberate
@@ -24,7 +24,6 @@ import { NodeKindEnum, SemanticDiff } from "@wso2/ballerina-core";
  */
 const NODE_KIND_LABELS: Record<number, string> = {
     [NodeKindEnum.MODULE_FUNCTION]: "function",
-    [NodeKindEnum.OBJECT_FUNCTION]: "resource",
     [NodeKindEnum.TYPE_DEFINITION]: "type",
     [NodeKindEnum.DATA_MAPPING_FUNCTION]: "data mapping",
     [NodeKindEnum.MODULE_VARIABLE]: "variable",
@@ -35,25 +34,34 @@ const NODE_KIND_LABELS: Record<number, string> = {
     [NodeKindEnum.IMPORT_DECLARATION]: "import",
 };
 
+const OBJECT_FUNCTION_KIND_LABELS: Record<ObjectFunctionKind, string> = {
+    resource: "resource",
+    remote: "remote",
+    init: "init",
+    method: "method",
+};
+
 export function getNodeKindLabel(nodeKind: number, metadata?: SemanticDiff["metadata"]): string {
     if (nodeKind === NodeKindEnum.OBJECT_FUNCTION) {
-        return getObjectFunctionLabel(metadata);
+        return OBJECT_FUNCTION_KIND_LABELS[getObjectFunctionKind(metadata)] ?? "method";
     }
     return NODE_KIND_LABELS[nodeKind] ?? "component";
 }
 
-// OBJECT_FUNCTION covers resource and remote functions and plain methods; only resources
-// carry an accessor. An older LS also sent remote functions with the function name as the
-// accessor and an empty resource path.
-function getObjectFunctionLabel(metadata?: SemanticDiff["metadata"]): string {
-    const m = metadata as { accessor?: string; resourcePath?: string; functionKind?: string } | undefined;
-    if (m?.functionKind === "remote") {
-        return "remote";
+/**
+ * Kind of an OBJECT_FUNCTION diff. When an older LS sends no functionKind, it is inferred:
+ * resources have an accessor and a resource path, and remote functions came with the function
+ * name as the accessor and an empty resource path.
+ */
+export function getObjectFunctionKind(metadata?: SemanticDiff["metadata"]): ObjectFunctionKind {
+    const m = metadata as { functionKind?: ObjectFunctionKind; accessor?: string; resourcePath?: string } | undefined;
+    if (m?.functionKind) {
+        return m.functionKind;
     }
     if (!m?.accessor) {
         return "method";
     }
-    return m.resourcePath ? NODE_KIND_LABELS[NodeKindEnum.OBJECT_FUNCTION] : "remote";
+    return m.resourcePath ? "resource" : "remote";
 }
 
 /**
