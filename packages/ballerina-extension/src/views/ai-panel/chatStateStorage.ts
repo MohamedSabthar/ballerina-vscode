@@ -305,6 +305,7 @@ export class ChatStateStorage {
     private readonly checkpointGcMinAgeMs: number;
     private checkpointGcTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private checkpointGcRuns: Map<string, Promise<void>> = new Map();
+    private checkpointStoreLocks: Map<string, Promise<void>> = new Map();
 
     constructor(options: ChatStateStorageOptions = {}) {
         this.persistenceStore = new CopilotPersistenceStore({
@@ -788,13 +789,17 @@ export class ChatStateStorage {
             const { notifyCheckpointCaptured } = await import('../../RPCLayer');
 
             const service = getCheckpointService(projectRootPath);
-            const checkpoint = await service.capture(generationId, {
-                previous: service.pickPrevious(this.inMemoryCheckpoints(projectRootPath)),
+            const checkpoint = await this.withCheckpointStoreLock(projectRootPath, async () => {
+                const captured = await service.capture(generationId, {
+                    previous: service.pickPrevious(this.inMemoryCheckpoints(projectRootPath)),
+                });
+                if (captured) {
+                    await this.addCheckpointToGeneration(projectRootPath, threadId, generationId, captured);
+                }
+                return captured;
             });
 
             if (checkpoint) {
-                await this.addCheckpointToGeneration(projectRootPath, threadId, generationId, checkpoint);
-
                 notifyCheckpointCaptured({
                     messageId: generationId,
                     checkpointId: checkpoint.id,
@@ -855,28 +860,45 @@ export class ChatStateStorage {
         if (!service.hasStoredContent()) {
             return;
         }
-        const threads = this.storage.get(projectRootPath)?.threads;
-        const live: Checkpoint[] = [...this.inMemoryCheckpoints(projectRootPath)];
-        for (const threadId of this.persistenceStore.listThreadIds(projectRootPath)) {
-            const inMemory = new Set(
-                (threads?.get(threadId)?.generations ?? []).filter(g => g.checkpoint).map(g => g.id)
-            );
-            for (const generationId of this.persistenceStore.listCheckpoints(projectRootPath, threadId)) {
-                if (inMemory.has(generationId)) {
-                    continue;
-                }
-                const persisted = await this.persistenceStore.loadCheckpointAsync(projectRootPath, threadId, generationId);
-                if (persisted) {
-                    live.push(fromPersistedCheckpoint(persisted));
-                } else if (this.persistenceStore.listCheckpoints(projectRootPath, threadId).includes(generationId)) {
-                    if (!this.quarantineCheckpoint(projectRootPath, threadId, generationId)) {
-                        console.warn(`[ChatStateStorage] Skipping checkpoint garbage collection: checkpoint ${generationId} is unreadable`);
-                        return;
+        await this.withCheckpointStoreLock(projectRootPath, async () => {
+            const threads = this.storage.get(projectRootPath)?.threads;
+            const live: Checkpoint[] = [...this.inMemoryCheckpoints(projectRootPath)];
+            for (const threadId of this.persistenceStore.listThreadIds(projectRootPath)) {
+                const inMemory = new Set(
+                    (threads?.get(threadId)?.generations ?? []).filter(g => g.checkpoint).map(g => g.id)
+                );
+                for (const generationId of this.persistenceStore.listCheckpoints(projectRootPath, threadId)) {
+                    if (inMemory.has(generationId)) {
+                        continue;
+                    }
+                    const persisted = await this.persistenceStore.loadCheckpointAsync(projectRootPath, threadId, generationId);
+                    if (persisted) {
+                        live.push(fromPersistedCheckpoint(persisted));
+                    } else if (this.persistenceStore.listCheckpoints(projectRootPath, threadId).includes(generationId)) {
+                        if (!this.quarantineCheckpoint(projectRootPath, threadId, generationId)) {
+                            console.warn(`[ChatStateStorage] Skipping checkpoint garbage collection: checkpoint ${generationId} is unreadable`);
+                            return;
+                        }
                     }
                 }
             }
-        }
-        await service.collectGarbage(live, { minAgeMs: this.checkpointGcMinAgeMs });
+            await service.collectGarbage(live, { minAgeMs: this.checkpointGcMinAgeMs });
+        });
+    }
+
+    // A capture can reuse a blob a sweep has already judged unused; running them one at a time closes that gap.
+    private withCheckpointStoreLock<T>(projectRootPath: string, task: () => Promise<T>): Promise<T> {
+        const key = path.resolve(projectRootPath);
+        const previous = this.checkpointStoreLocks.get(key) ?? Promise.resolve();
+        const run = previous.then(task);
+        const settled = run.then(() => undefined, () => undefined);
+        this.checkpointStoreLocks.set(key, settled);
+        settled.then(() => {
+            if (this.checkpointStoreLocks.get(key) === settled) {
+                this.checkpointStoreLocks.delete(key);
+            }
+        });
+        return run;
     }
 
     // An unreadable checkpoint can never be restored, but while it is listed GC cannot tell which blobs it holds.

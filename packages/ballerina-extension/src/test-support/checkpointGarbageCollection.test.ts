@@ -245,6 +245,30 @@ describe("checkpoint garbage collection", () => {
         expect(fs.existsSync(blobOf("// other window\n"))).toBe(true);
     });
 
+    it("does not let a capture reuse a blob the sweep is about to delete", async () => {
+        const storage = new ChatStateStorage(GC_NOW);
+        const doomed = storage.createNewThread(root);
+        fs.writeFileSync(at("Config.toml"), "port = 8080\n");
+        await captured(storage, doomed, "doomed");
+        fs.rmSync(at("Config.toml"));
+        const later = storage.createNewThread(root);
+
+        let laterGen = "";
+        const sweep = FsBlobStore.prototype.sweep;
+        jest.spyOn(FsBlobStore.prototype, "sweep").mockImplementation(async function (this: FsBlobStore, ...args) {
+            fs.writeFileSync(at("Config.toml"), "port = 8080\n");
+            laterGen = storage.addGeneration(root, later, "later", {}).id;
+            await new Promise(resolve => setTimeout(resolve, 50));
+            return sweep.apply(this, args);
+        });
+
+        await storage.deleteThread(root, doomed);
+        await storage.flushCheckpointGc(root);
+        await storage.waitForCheckpointCapture(laterGen);
+
+        expect(fs.existsSync(blobOf("port = 8080\n"))).toBe(true);
+    });
+
     it("moves an unreadable persisted checkpoint aside and still collects", async () => {
         const storage = new ChatStateStorage(GC_NOW);
         const doomed = storage.createNewThread(root);
