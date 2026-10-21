@@ -91,14 +91,14 @@
         "range": {
           "start": {
             "line": 10,
-            "character": 57
+            "character": 56
           },
           "end": {
             "line": 10,
             "character": 57
           }
         },
-        "newText": "\n,\n        {name: \"payment\", request: Payment, cardinality: workflow:SINGLE_EVENT}"
+        "newText": "},\n        {name: \"payment\", request: Payment, cardinality: workflow:SINGLE_EVENT}"
       }
     ]
   }

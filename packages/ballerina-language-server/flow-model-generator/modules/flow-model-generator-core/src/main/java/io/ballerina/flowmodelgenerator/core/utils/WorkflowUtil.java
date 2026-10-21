@@ -436,8 +436,7 @@ public class WorkflowUtil {
             boolean keyedField) {
         MappingConstructorExpressionNode config = declaration.config();
 
-        LinePosition insertAt = null;
-        String newText = null;
+        org.eclipse.lsp4j.TextEdit insertion = null;
         for (MappingFieldNode field : config.fields()) {
             if (!(field instanceof SpecificFieldNode specificField)
                     || !fieldName.equals(specificField.fieldName().toSourceCode().trim())) {
@@ -446,8 +445,8 @@ public class WorkflowUtil {
             // The entries, their brackets, and whether the literal already has any: the same
             // placement serves the list form and the keyed mapping form.
             List<? extends Node> entries;
-            Node open;
-            Node close;
+            Token open;
+            Token close;
             if (specificField.valueExpr().isPresent()
                     && specificField.valueExpr().get() instanceof ListConstructorExpressionNode list) {
                 entries = list.expressions().stream().toList();
@@ -467,20 +466,18 @@ public class WorkflowUtil {
                         + "inline it in the agent declaration and try again");
             }
             if (entries.isEmpty()) {
-                insertAt = close.lineRange().startLine();
-                newText = entryText;
+                insertion = insertBefore(close, entryText);
             } else {
                 // After the last entry: on its own line at the entries' indentation when the literal
                 // is laid out that way, inline otherwise.
                 Node last = entries.get(entries.size() - 1);
-                insertAt = last.lineRange().endLine();
                 LinePosition start = last.lineRange().startLine();
                 boolean multiLine = start.line() != open.lineRange().startLine().line();
-                newText = (multiLine ? ",\n" + indentOf(last, start) : ", ") + entryText;
+                insertion = appendAfter(last, (multiLine ? ",\n" + indentOf(last, start) : ", ") + entryText);
             }
             break;
         }
-        if (insertAt == null) {
+        if (insertion == null) {
             // A new field follows the last config field, as any other appended field does.
             String literal = keyedField ? "{" + entryText + "}" : "[" + entryText + "]";
             Map<Path, List<org.eclipse.lsp4j.TextEdit>> edits = new HashMap<>();
@@ -488,11 +485,8 @@ public class WorkflowUtil {
                     List.of(appendConfigFields(config, Map.of(fieldName, literal))));
             return edits;
         }
-        org.eclipse.lsp4j.Position position =
-                new org.eclipse.lsp4j.Position(insertAt.line(), insertAt.offset());
         Map<Path, List<org.eclipse.lsp4j.TextEdit>> edits = new HashMap<>();
-        edits.put(declaration.filePath(), List.of(new org.eclipse.lsp4j.TextEdit(
-                new org.eclipse.lsp4j.Range(position, position), newText)));
+        edits.put(declaration.filePath(), List.of(insertion));
         return edits;
     }
 
@@ -2105,8 +2099,8 @@ public class WorkflowUtil {
             // The list form's items and the keyed form's fields delete the same way; only a
             // capability field is a candidate, never a mapping like systemPrompt.
             List<? extends Node> expressions;
-            Node open;
-            Node close;
+            Token open;
+            Token close;
             if (specificField.valueExpr().get() instanceof ListConstructorExpressionNode list) {
                 expressions = list.expressions().stream().toList();
                 open = list.openBracket();
@@ -2198,21 +2192,35 @@ public class WorkflowUtil {
     private static org.eclipse.lsp4j.TextEdit appendConfigFields(MappingConstructorExpressionNode config,
                                                                  Map<String, String> missing) {
         StringBuilder insertion = new StringBuilder();
-        org.eclipse.lsp4j.Position position;
         if (config.fields().isEmpty()) {
-            LinePosition closeBrace = config.closeBrace().lineRange().startLine();
-            position = new org.eclipse.lsp4j.Position(closeBrace.line(), closeBrace.offset());
             appendFields(insertion, missing, ", ", false);
-        } else {
-            MappingFieldNode last = config.fields().get(config.fields().size() - 1);
-            LinePosition end = last.lineRange().endLine();
-            position = new org.eclipse.lsp4j.Position(end.line(), end.offset());
-            LinePosition start = last.lineRange().startLine();
-            boolean multiLine = start.line() != config.openBrace().lineRange().startLine().line();
-            appendFields(insertion, missing, multiLine ? ",\n" + indentOf(last, start) : ", ", true);
+            return insertBefore(config.closeBrace(), insertion.toString());
         }
-        return new org.eclipse.lsp4j.TextEdit(new org.eclipse.lsp4j.Range(position, position),
-                insertion.toString());
+        MappingFieldNode last = config.fields().get(config.fields().size() - 1);
+        LinePosition start = last.lineRange().startLine();
+        boolean multiLine = start.line() != config.openBrace().lineRange().startLine().line();
+        appendFields(insertion, missing, multiLine ? ",\n" + indentOf(last, start) : ", ", true);
+        return appendAfter(last, insertion.toString());
+    }
+
+    // Edits that add text next to a node are written as the replacement of the node's last character, or of
+    // the closing bracket, rather than as insertions: SourceGenerator puts a line break in front of an
+    // insertion, which is right for a new statement and leaves a separating comma on a line of its own.
+    private static org.eclipse.lsp4j.TextEdit appendAfter(Node node, String text) {
+        LinePosition end = node.lineRange().endLine();
+        String line = node.syntaxTree().textDocument().line(end.line()).text();
+        char lastChar = line.charAt(end.offset() - 1);
+        return new org.eclipse.lsp4j.TextEdit(new org.eclipse.lsp4j.Range(
+                new org.eclipse.lsp4j.Position(end.line(), end.offset() - 1),
+                new org.eclipse.lsp4j.Position(end.line(), end.offset())), lastChar + text);
+    }
+
+    private static org.eclipse.lsp4j.TextEdit insertBefore(Token close, String text) {
+        LinePosition start = close.lineRange().startLine();
+        return new org.eclipse.lsp4j.TextEdit(new org.eclipse.lsp4j.Range(
+                new org.eclipse.lsp4j.Position(start.line(), start.offset()),
+                new org.eclipse.lsp4j.Position(start.line(), start.offset() + close.text().length())),
+                text + close.text());
     }
 
     // The indentation a node sits at, read from its own leading whitespace so a tab-indented

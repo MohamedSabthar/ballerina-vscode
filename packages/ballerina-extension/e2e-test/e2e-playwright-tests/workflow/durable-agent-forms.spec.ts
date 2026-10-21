@@ -168,7 +168,7 @@ export default function createTests() {
             await selectDropdown(panel, /Cardinality/, 'SINGLE_EVENT');
             await saveForm(panel, webview);
             // The map form the module declares, keyed by the name — not a list of {name: ...} records.
-            // A second entry is appended after a newline and a comma on its own line, hence `\}\s*,`.
+            // The comma follows the previous entry on its line: the designer once wrote it on a line of its own.
             await expect.poll(mainSource, { timeout: 90000 })
                 .toMatch(/events:\s*\{\s*bill:\s*\{request:\s*json,\s*cardinality:\s*workflow:SINGLE_EVENT\}\s*\}/);
             expect(mainSource()).not.toMatch(/events:\s*\[/);
@@ -180,7 +180,7 @@ export default function createTests() {
             await fillUnderLabel(panel, 'Response Type', 'string', webview);
             await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
-                .toMatch(/events:\s*\{\s*bill:\s*\{[^}]*\}\s*,\s*chat:\s*\{request:\s*string,\s*response:\s*string\}\s*\}/);
+                .toMatch(/events:\s*\{\s*bill:\s*\{[^}]*\},\s*chat:\s*\{request:\s*string,\s*response:\s*string\}\s*\}/);
         });
 
         // A role given as an expression is refused at Save by the audience check although the editor shows
@@ -232,7 +232,7 @@ export default function createTests() {
             await fillUnderLabel(panel, 'Completion Type', 'BillDetails', webview);
             await saveForm(panel, webview);
             await expect.poll(mainSource, { timeout: 90000 })
-                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\}\s*,\s*financeApproval:\s*\{userRoles:\s*\(\),\s*users:\s*"bob",\s*resultType:\s*BillDetails\}\s*\}/);
+                .toMatch(/humanTasks:\s*\{\s*managerApproval:\s*\{[^}]*\},\s*financeApproval:\s*\{userRoles:\s*\(\),\s*users:\s*"bob",\s*resultType:\s*BillDetails\}\s*\}/);
         });
 
         test('Send Agent Data Event discards the token on a one-way channel', async () => {
