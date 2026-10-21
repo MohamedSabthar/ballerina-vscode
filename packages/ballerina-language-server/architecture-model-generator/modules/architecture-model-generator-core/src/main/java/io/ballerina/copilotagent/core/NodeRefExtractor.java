@@ -63,8 +63,11 @@ public class NodeRefExtractor extends NodeVisitor {
 
     @Override
     public void visit(ServiceDeclarationNode serviceDeclarationNode) {
+        // SeparatedNodeList has no toString(); without joining the sources the key holds an identity hash.
         String key = getPath(serviceDeclarationNode.absoluteResourcePath()) + "#" +
-                     serviceDeclarationNode.expressions();
+                     serviceDeclarationNode.expressions().stream()
+                             .map(expression -> expression.toSourceCode().trim())
+                             .collect(Collectors.joining(","));
         this.nodeRefMap.putServiceNode(key, serviceDeclarationNode);
     }
 

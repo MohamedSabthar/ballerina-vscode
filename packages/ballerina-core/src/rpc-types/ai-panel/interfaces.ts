@@ -482,6 +482,8 @@ export type ObjectFunctionKind = "resource" | "remote" | "init" | "method";
 export interface ResourceMetadata {
     accessor: string;
     servicePath: string;
+    /** The listener's module, e.g. "http"; absent when the LS can't tell. */
+    serviceType?: string;
     resourcePath: string;
     functionKind?: "resource";
 }
@@ -490,6 +492,8 @@ export interface ResourceMetadata {
 export interface ObjectFunctionMetadata {
     name: string;
     servicePath?: string;
+    /** The listener's module, e.g. "http"; absent when the LS can't tell. */
+    serviceType?: string;
     functionKind?: ObjectFunctionKind;
 }
 
