@@ -299,9 +299,9 @@ describe("CheckpointService", () => {
             expect(fs.readFileSync(at("main.bal"), "utf8")).toBe("// the generation's edit\n");
         });
 
-        describe.each<Kind>(["inline", "content-store"])("with a dirty editor over an unchanged file (%s)", (kind) => {
-            it.each(["main.bal", "Config.toml"])("leaves %s with the checkpoint content", async (name) => {
-                const svc = service(kind);
+        describe("with a dirty editor over an unchanged file", () => {
+            it.each(["main.bal", "Config.toml"])("inline reverts %s to the checkpoint content", async (name) => {
+                const svc = service("inline");
                 const cp = (await svc.capture("msg-1"))!;
                 const original = fs.readFileSync(at(name), "utf8");
                 openEditor(name, "half-typed edit the user has not saved\n", true);
@@ -310,6 +310,30 @@ describe("CheckpointService", () => {
 
                 expect(fs.readFileSync(at(name), "utf8")).toBe(original);
             });
+
+            it.each(["main.bal", "Config.toml"])("content-store keeps the user's edit in %s", async (name) => {
+                const svc = service("content-store");
+                const cp = (await svc.capture("msg-1"))!;
+                openEditor(name, "half-typed edit the user has not saved\n", true);
+
+                await expect(svc.restore(cp, { skipArtifactWait: true })).resolves.toBe(true);
+
+                expect(fs.readFileSync(at(name), "utf8")).toBe("half-typed edit the user has not saved\n");
+            });
+        });
+
+        it("names a large file that was deleted since capture", async () => {
+            fs.writeFileSync(at("dataset.csv"), "x".repeat(64));
+            config.maxFileSize = 48;
+            const svc = service();
+            const cp = (await svc.capture("msg-1"))!;
+            fs.rmSync(at("dataset.csv"));
+
+            await expect(svc.restore(cp, { skipArtifactWait: true })).resolves.toBe(true);
+
+            expect(fs.existsSync(at("dataset.csv"))).toBe(false);
+            expect(warnings).toHaveLength(1);
+            expect(warnings[0]).toContain("dataset.csv");
         });
 
         it("leaves a large file that changed since capture alone, and names it", async () => {

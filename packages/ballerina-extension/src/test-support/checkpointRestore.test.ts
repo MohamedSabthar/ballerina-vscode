@@ -440,7 +440,7 @@ describe.each(KINDS)("what a checkpoint restore is allowed to touch (%s)", (kind
         expect(fs.statSync(at("Config.toml")).mtimeMs).toBe(before);
     });
 
-    it("still rewrites a file whose unsaved editor differs from what is on disk", async () => {
+    it("rewrites an unsaved editor over an unchanged file only for inline checkpoints", async () => {
         fs.writeFileSync(at("main.bal"), ORIGINAL_BAL);
         workspace.textDocuments = [{
             uri: Uri.file(at("main.bal")),
@@ -451,7 +451,12 @@ describe.each(KINDS)("what a checkpoint restore is allowed to touch (%s)", (kind
 
         await expect(restoreWorkspaceSnapshot(checkpoint, true)).resolves.toBe(true);
 
-        expect(applied.filter(e => e.op === "replace").map(e => e.content)).toContain(ORIGINAL_BAL);
+        const replaced = applied.filter(e => e.op === "replace").map(e => e.content);
+        if (kind === "inline") {
+            expect(replaced).toContain(ORIGINAL_BAL);
+        } else {
+            expect(replaced).not.toContain(ORIGINAL_BAL);
+        }
     });
 
     it("sends a file the snapshot never captured to the trash rather than unlinking it", async () => {

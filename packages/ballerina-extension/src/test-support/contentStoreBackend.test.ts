@@ -120,14 +120,14 @@ describe('ContentStoreBackend', () => {
         expect(await backend.restoreCandidates(cp, [])).toEqual([]);
     });
 
-    it('reports a skipped file as changed only once its size or mtime moved', async () => {
+    it('reports a skipped file once its size or mtime moved, or once it is gone', async () => {
         write('big.bin', Buffer.alloc(LIMITS.maxFileSize + 1, 1));
         const { cp } = await captureCp();
 
         expect(await backend.changedUnstored(cp, scan())).toEqual([]);
         write('big.bin', Buffer.alloc(LIMITS.maxFileSize + 2, 1));
         expect(await backend.changedUnstored(cp, scan())).toEqual(['big.bin']);
-        expect(await backend.changedUnstored(cp, [])).toEqual([]);
+        expect(await backend.changedUnstored(cp, [])).toEqual(['big.bin']);
     });
 
     it('marks a file it cannot read as unreadable', async () => {

@@ -117,7 +117,7 @@ export class ContentStoreBackend implements CheckpointBackend {
         return Object.entries(this.filesOf(cp))
             .filter(([p, entry]) => {
                 const file = byPath.get(p);
-                return isSkippedEntry(entry) && !!file && (file.size !== entry.size || file.mtimeMs !== entry.mtimeMs);
+                return isSkippedEntry(entry) && (!file || file.size !== entry.size || file.mtimeMs !== entry.mtimeMs);
             })
             .map(([p]) => p);
     }

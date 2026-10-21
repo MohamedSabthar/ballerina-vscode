@@ -259,10 +259,8 @@ export class CheckpointService {
         const currentFiles = await scanWorkspace(workspaceRoot, ignorePatterns);
         const changedUnstored = await backend.changedUnstored(cp, currentFiles);
 
-        // An open editor can differ from the checkpoint while its file on disk does not.
         const candidates = new Set([
             ...await backend.restoreCandidates(cp, currentFiles),
-            ...openDocumentPaths(workspaceRoot),
             ...changedUnstored,
         ]);
 
@@ -297,20 +295,6 @@ export class CheckpointService {
             notRestored
         };
     }
-}
-
-function openDocumentPaths(workspaceRoot: vscode.Uri): string[] {
-    const paths: string[] = [];
-    for (const doc of vscode.workspace.textDocuments) {
-        if (doc.uri.scheme !== 'file') {
-            continue;
-        }
-        const relative = path.relative(workspaceRoot.fsPath, doc.uri.fsPath);
-        if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
-            paths.push(toPosix(relative));
-        }
-    }
-    return paths;
 }
 
 const services = new Map<string, CheckpointService>();
