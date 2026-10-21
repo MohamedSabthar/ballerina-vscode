@@ -1199,11 +1199,10 @@ public class CodeAnalyzer extends NodeVisitor {
         return null;
     }
 
-    // `check` only: a `checkpanic` call handles the error itself, which the agent forms spell as
-    // Check Error off, so reopening the node keeps the keyword the statement was written with.
+    // `check` and `checkpanic` both read as Check Error on: neither hands the error to the binding. The
+    // node's checkpanic flag tells the builders which keyword to write back, so a re-save keeps it.
     private static boolean isCheckedAgentCall(Node callNode) {
-        return callNode.parent() instanceof CheckExpressionNode checked
-                && checked.checkKeyword().kind() == SyntaxKind.CHECK_KEYWORD;
+        return callNode.parent() instanceof CheckExpressionNode;
     }
 
     // The expression a call argument carries, whichever way it was written.

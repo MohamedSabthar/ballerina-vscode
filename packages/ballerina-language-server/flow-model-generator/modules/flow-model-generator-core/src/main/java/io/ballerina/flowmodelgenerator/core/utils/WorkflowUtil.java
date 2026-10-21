@@ -1170,23 +1170,23 @@ public class WorkflowUtil {
         return key + ": {" + String.join(", ", rest) + "}";
     }
 
-    // The node's source from its tokens alone, spaced where the source was: a line break or a run
-    // of whitespace becomes one space, so the text can sit inside a one-line entry. Comments are
-    // the caller's to refuse first.
+    // The node's source from its tokens alone, spaced where the source was: the minutiae between two
+    // tokens become one space, so the text can sit inside a one-line entry, while a token's own text
+    // (a string literal, a multi-line template) is kept as written. Comments are the caller's to refuse.
     private static String compactSource(Node node) {
         StringBuilder text = new StringBuilder();
         appendTokens(node, text);
-        return text.toString().replaceAll("\\s+", " ").trim();
+        return text.toString().trim();
     }
 
     private static void appendTokens(Node node, StringBuilder text) {
         if (node instanceof Token token) {
             if (!token.leadingMinutiae().isEmpty()) {
-                text.append(' ');
+                appendSpace(text);
             }
             text.append(token.text());
             if (!token.trailingMinutiae().isEmpty()) {
-                text.append(' ');
+                appendSpace(text);
             }
             return;
         }
@@ -1194,6 +1194,13 @@ public class WorkflowUtil {
             for (Node child : parent.children()) {
                 appendTokens(child, text);
             }
+        }
+    }
+
+    // One space between two tokens, however many minutiae sat on either side of the gap.
+    private static void appendSpace(StringBuilder text) {
+        if (!text.isEmpty() && text.charAt(text.length() - 1) != ' ') {
+            text.append(' ');
         }
     }
 

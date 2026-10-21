@@ -141,7 +141,7 @@
                 "selected": true
               }
             ],
-            "value": false,
+            "value": true,
             "optional": false,
             "editable": true,
             "advanced": true,
@@ -343,7 +343,7 @@
                 "selected": true
               }
             ],
-            "value": false,
+            "value": true,
             "optional": false,
             "editable": true,
             "advanced": true,

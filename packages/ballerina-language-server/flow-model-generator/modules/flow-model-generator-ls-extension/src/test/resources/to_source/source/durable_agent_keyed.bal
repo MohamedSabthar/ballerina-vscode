@@ -63,3 +63,13 @@ final workflow:DurableAgent constNameAgent = check new ({
     model: keyedModel,
     events: [{name: EVENT_NAME, request: json}]
 });
+
+# A listed task whose texts carry their own spacing: a conversion must keep them as written.
+final workflow:DurableAgent spacedAgent = check new ({
+    systemPrompt: {role: "Bills", instructions: "Review bills."},
+    model: keyedModel,
+    humanTasks: [
+        {name: "review", userRoles: "FINANCE", title: "Approve  the bill", description: string `Check the total.
+    Approve if under 100.`}
+    ]
+});

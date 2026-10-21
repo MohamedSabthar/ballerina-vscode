@@ -193,16 +193,17 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
         // sendData answers `string|error` on every channel: that value is the turn's correlation
         // token, never the channel's declared `response`. On a channel that declares one, the token
         // is what Get Agent Data Result reads the response with; on a one-way channel there is
-        // nothing to read, the compiler plugin rejects binding the token, and it is discarded. `_`
-        // cannot take the error member, so the discard goes through `check`, or `checkpanic` when
-        // Check Error is off (a function that returns no error can still send). A declaration that
-        // cannot be read keeps the binding: the compiler says which one it is, a silent discard would not.
+        // nothing to read, the compiler plugin rejects any binding of the token (WORKFLOW_153 accepts only
+        // `_ = ...`), and `_` cannot take the error member: the discard goes through `check`, or
+        // `checkpanic` when Check Error is off. A declaration that cannot be read keeps the binding: the
+        // compiler says which one it is, a silent discard would not.
         boolean oneWay = WorkflowUtil.agentEventDeclaresResponse(sourceBuilder.workspaceManager,
                 sourceBuilder.filePath, agent, WorkflowUtil.capabilityName(eventName))
                 .map(declares -> !declares).orElse(false);
         if (oneWay) {
             sourceBuilder.token().name("_").whiteSpace().keyword(SyntaxKind.EQUAL_TOKEN)
-                    .keyword(checkError ? SyntaxKind.CHECK_KEYWORD : SyntaxKind.CHECKPANIC_KEYWORD);
+                    .keyword(checkError ? FlowNodeUtil.checkKeyword(sourceBuilder.flowNode)
+                            : SyntaxKind.CHECKPANIC_KEYWORD);
         } else {
             sourceBuilder.token()
                     .name(checkError ? STRING_TYPE : STRING_TYPE + "|error")
@@ -211,7 +212,7 @@ public class DurableAgentUpdateBuilder extends FunctionCall {
                     .whiteSpace()
                     .keyword(SyntaxKind.EQUAL_TOKEN);
             if (checkError) {
-                sourceBuilder.token().keyword(SyntaxKind.CHECK_KEYWORD);
+                sourceBuilder.token().keyword(FlowNodeUtil.checkKeyword(sourceBuilder.flowNode));
             }
         }
         sourceBuilder.token()
