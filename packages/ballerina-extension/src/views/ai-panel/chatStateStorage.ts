@@ -16,6 +16,7 @@
  * under the License.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import {
     WorkspaceChatState,
@@ -868,12 +869,27 @@ export class ChatStateStorage {
                 if (persisted) {
                     live.push(fromPersistedCheckpoint(persisted));
                 } else if (this.persistenceStore.listCheckpoints(projectRootPath, threadId).includes(generationId)) {
-                    console.warn(`[ChatStateStorage] Skipping checkpoint garbage collection: checkpoint ${generationId} is unreadable`);
-                    return;
+                    if (!this.quarantineCheckpoint(projectRootPath, threadId, generationId)) {
+                        console.warn(`[ChatStateStorage] Skipping checkpoint garbage collection: checkpoint ${generationId} is unreadable`);
+                        return;
+                    }
                 }
             }
         }
         await service.collectGarbage(live, { minAgeMs: this.checkpointGcMinAgeMs });
+    }
+
+    // An unreadable checkpoint can never be restored, but while it is listed GC cannot tell which blobs it holds.
+    private quarantineCheckpoint(projectRootPath: string, threadId: string, generationId: string): boolean {
+        const file = path.join(this.getThreadDir(projectRootPath, threadId), 'checkpoints', `${generationId}.snapshot.gz`);
+        try {
+            fs.renameSync(file, `${file}.unreadable`);
+            console.warn(`[ChatStateStorage] Moved unreadable checkpoint ${generationId} aside to ${file}.unreadable`);
+            return true;
+        } catch (error) {
+            console.error(`[ChatStateStorage] Failed to move unreadable checkpoint ${generationId} aside:`, error);
+            return false;
+        }
     }
 
     /**

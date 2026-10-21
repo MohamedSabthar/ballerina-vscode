@@ -185,10 +185,12 @@ export function activateAIFeatures(ballerinaExternalInstance: BallerinaExtension
             await restoreWorkspaceSnapshot(resolveProjectRootPath(), checkpoint, skipArtifactWait);
         });
 
-        commands.registerCommand('ballerina.test.ai.readCheckpointOriginals', async (checkpoint: Checkpoint, paths: string[]): Promise<Record<string, string | null>> => {
-            const originals = await getCheckpointService(resolveProjectRootPath()).readOriginals(checkpoint, paths);
-            return Object.fromEntries([...originals].map(([p, o]) => [p, o.state === 'content' ? o.bytes.toString('utf8') : null]));
-        });
+        extension.context.subscriptions.push(
+            commands.registerCommand('ballerina.test.ai.readCheckpointOriginals', async (checkpoint: Checkpoint, paths: string[]): Promise<Record<string, string | null>> => {
+                const originals = await getCheckpointService(resolveProjectRootPath()).readOriginals(checkpoint, paths);
+                return Object.fromEntries([...originals].map(([p, o]) => [p, o.state === 'content' ? o.bytes.toString('utf8') : null]));
+            })
+        );
 
         commands.registerCommand('ballerina.test.ai.integrateCodeToWorkspace', async (tempProjectPath: string, modifiedFiles: string[], ctx: ExecutionContext): Promise<void> => {
             return await integrateCodeToWorkspace(tempProjectPath, new Set(modifiedFiles), ctx);

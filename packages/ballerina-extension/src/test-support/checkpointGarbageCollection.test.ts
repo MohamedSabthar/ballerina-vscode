@@ -244,4 +244,25 @@ describe("checkpoint garbage collection", () => {
         expect(fs.existsSync(blobOf("// in memory\n"))).toBe(true);
         expect(fs.existsSync(blobOf("// other window\n"))).toBe(true);
     });
+
+    it("moves an unreadable persisted checkpoint aside and still collects", async () => {
+        const storage = new ChatStateStorage(GC_NOW);
+        const doomed = storage.createNewThread(root);
+        fs.writeFileSync(at("only.bal"), "// only the doomed thread\n");
+        await captured(storage, doomed, "doomed");
+        fs.rmSync(at("only.bal"));
+
+        const otherWindow = new ChatStateStorage(GC_NOW);
+        const otherThread = otherWindow.createNewThread(root);
+        const otherGen = await captured(otherWindow, otherThread, "other");
+        const checkpointFile = path.join(storage.getThreadDir(root, otherThread), "checkpoints", `${otherGen}.snapshot.gz`);
+        fs.writeFileSync(checkpointFile, "not gzip");
+
+        await storage.deleteThread(root, doomed);
+        await storage.flushCheckpointGc(root);
+
+        expect(fs.existsSync(blobOf("// only the doomed thread\n"))).toBe(false);
+        expect(fs.existsSync(checkpointFile)).toBe(false);
+        expect(fs.existsSync(`${checkpointFile}.unreadable`)).toBe(true);
+    });
 });

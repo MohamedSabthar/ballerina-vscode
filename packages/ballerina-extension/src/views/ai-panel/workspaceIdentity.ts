@@ -28,5 +28,5 @@ import * as path from 'path';
  * back to the resolved path (local dev and any non-cloud environment).
  */
 export function resolveWorkspaceIdentity(projectRootPath: string): string {
-    return process.env.CLOUD_INITIAL_PROJECT_ID ?? path.resolve(projectRootPath);
+    return process.env.CLOUD_INITIAL_PROJECT_ID || path.resolve(projectRootPath);
 }
