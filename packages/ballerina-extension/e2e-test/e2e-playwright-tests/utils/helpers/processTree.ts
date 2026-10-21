@@ -17,37 +17,51 @@
  */
 import { execFileSync } from 'child_process';
 
-// The processes under a pid, parents first: the extension host under Electron, the language server
-// and any `bal run` under the extension host. Read before the root is killed, since killing it
-// reparents them to init and the tree is gone. Empty on Windows, where taskkill takes the tree itself.
-export function descendantPids(root: number): number[] {
-    return descendants(root).map((entry) => entry.pid);
-}
-
 export interface ProcessEntry {
     pid: number;
     command: string;
 }
 
-export function descendants(root: number): ProcessEntry[] {
-    if (process.platform === 'win32') {
-        return [];
-    }
-    const childrenOf = new Map<number, ProcessEntry[]>();
+interface ProcessRow extends ProcessEntry {
+    ppid: number;
+}
+
+const WINDOWS_PROCESS_QUERY =
+    'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.Name)" }';
+
+// Every live process with its parent and command name, from ps or, on Windows, from Win32_Process.
+function processTable(): ProcessRow[] {
     let table: string;
     try {
-        table = execFileSync('ps', ['-eo', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 10000 });
+        table = process.platform === 'win32'
+            ? execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_QUERY],
+                { encoding: 'utf8', timeout: 20000 })
+            : execFileSync('ps', ['-eo', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 10000 });
     } catch {
         return [];
     }
-    for (const line of table.split('\n')) {
+    const rows: ProcessRow[] = [];
+    for (const line of table.split(/\r?\n/)) {
         const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
-        if (!match) {
-            continue;
+        if (match) {
+            rows.push({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] });
         }
-        const entry = { pid: Number(match[1]), command: match[3] };
-        const ppid = Number(match[2]);
-        (childrenOf.get(ppid) ?? childrenOf.set(ppid, []).get(ppid)!).push(entry);
+    }
+    return rows;
+}
+
+// The processes under a pid, parents first: the extension host under Electron, the language server
+// and any `bal run` under the extension host. Read before the root is killed, since killing it
+// reparents them (or, on Windows, orphans them) and the tree is gone.
+export function descendantPids(root: number): number[] {
+    return descendants(root).map((entry) => entry.pid);
+}
+
+export function descendants(root: number): ProcessEntry[] {
+    const childrenOf = new Map<number, ProcessEntry[]>();
+    for (const row of processTable()) {
+        (childrenOf.get(row.ppid) ?? childrenOf.set(row.ppid, []).get(row.ppid)!)
+            .push({ pid: row.pid, command: row.command });
     }
     const found: ProcessEntry[] = [];
     const queue = [root];
@@ -60,10 +74,14 @@ export function descendants(root: number): ProcessEntry[] {
     return found;
 }
 
-// The command names of live processes, for the log line that says what a reap killed.
+// The command names of live processes, as "<pid> <command>" lines, for the reap's log and its pid check.
 export function commandsOf(pids: number[]): string[] {
-    if (process.platform === 'win32' || pids.length === 0) {
+    if (pids.length === 0) {
         return [];
+    }
+    if (process.platform === 'win32') {
+        const wanted = new Set(pids);
+        return processTable().filter((row) => wanted.has(row.pid)).map((row) => `${row.pid} ${row.command}`);
     }
     try {
         return execFileSync('ps', ['-o', 'pid=,comm=', '-p', pids.join(',')], { encoding: 'utf8', timeout: 10000 })
@@ -73,8 +91,8 @@ export function commandsOf(pids: number[]): string[] {
     }
 }
 
-// Kills a process tree. On Windows taskkill /T takes the root and everything under it; elsewhere the
-// root is the caller's to kill and the descendants collected earlier are killed here, parents first.
+// Kills a process tree. On Windows taskkill /T takes a live root and everything under it, so call it
+// before the root is killed; the descendants collected earlier are then killed here, parents first.
 export function killProcessTree(root: number, descendants: ProcessEntry[]): number {
     if (process.platform === 'win32') {
         try {
@@ -82,15 +100,14 @@ export function killProcessTree(root: number, descendants: ProcessEntry[]): numb
         } catch {
             // already gone
         }
-        return 0;
     }
     return killPids(descendants);
 }
 
-// Kills remembered processes, each only while ps still reports it under the command it was seen
+// Kills remembered processes, each only while it is still listed under the command it was seen
 // with: a pid of a short-lived helper can belong to an unrelated process by the time it is reaped.
 export function killPids(entries: ProcessEntry[]): number {
-    if (process.platform === 'win32' || entries.length === 0) {
+    if (entries.length === 0) {
         return 0;
     }
     const live = new Map<number, string>();
@@ -106,6 +123,7 @@ export function killPids(entries: ProcessEntry[]): number {
             continue;
         }
         try {
+            // On Windows the signal is ignored and the process is terminated.
             process.kill(entry.pid, 'SIGKILL');
             killed++;
         } catch {

@@ -373,6 +373,8 @@ test.afterAll(async () => {
                 // still alive at the end of a group 5 job). Enough of them starve the runner and
                 // the job ends with "The runner has received a shutdown signal".
                 const children = descendants(electronProcess.pid);
+                // taskkill /T walks the tree from a live root only, so on Windows it runs before the SIGKILL.
+                const killedFirst = process.platform === 'win32' ? killProcessTree(electronProcess.pid, children) : 0;
                 await new Promise<void>((resolve) => {
                     let settled = false;
                     const done = () => {
@@ -390,7 +392,8 @@ test.afterAll(async () => {
                         done();
                     }
                 });
-                const killed = killProcessTree(electronProcess.pid, children) + helpers.reapAllProcessesSeenUnderVSCode();
+                const killedAfter = process.platform === 'win32' ? 0 : killProcessTree(electronProcess.pid, children);
+                const killed = killedFirst + killedAfter + helpers.reapAllProcessesSeenUnderVSCode();
                 console.log(`✅ VS Code Electron app terminated (${killed} processes it or its reloads had spawned killed with it)`);
             } else {
                 // The app is gone, but the language servers its reloads left behind are not.

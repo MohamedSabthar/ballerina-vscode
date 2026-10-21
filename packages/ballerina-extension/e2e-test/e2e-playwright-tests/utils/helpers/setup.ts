@@ -682,7 +682,7 @@ export function initMigrationTest() {
         await toggleNotifications(true);
 
         // Reload VS Code to apply the language server setting
-        await page.executePaletteCommand('Reload Window');
+        await reloadWindow();
         await page.page.waitForLoadState();
         await page.page.waitForTimeout(5000); // Give VS Code time to fully reload
 
