@@ -5,40 +5,6 @@
     "loadDesignDiagrams": true,
     "semanticDiffs": [
       {
-        "changeType": "MODIFICATION",
-        "nodeKind": "OBJECT_FUNCTION",
-        "uri": "ai:///main.bal",
-        "lineRange": {
-          "fileName": "main.bal",
-          "startLine": {
-            "line": 5,
-            "offset": 8
-          },
-          "endLine": {
-            "line": 5,
-            "offset": 26
-          }
-        },
-        "previousLineRange": {
-          "fileName": "main.bal",
-          "startLine": {
-            "line": 5,
-            "offset": 8
-          },
-          "endLine": {
-            "line": 5,
-            "offset": 25
-          }
-        },
-        "metadata": {
-          "accessor": "post",
-          "servicePath": "/orders",
-          "serviceType": "http",
-          "resourcePath": ".",
-          "functionKind": "resource"
-        }
-      },
-      {
         "changeType": "ADDITION",
         "nodeKind": "OBJECT_FUNCTION",
         "uri": "ai:///main.bal",
@@ -80,6 +46,40 @@
           "servicePath": "",
           "serviceType": "http",
           "resourcePath": "ready",
+          "functionKind": "resource"
+        }
+      },
+      {
+        "changeType": "MODIFICATION",
+        "nodeKind": "OBJECT_FUNCTION",
+        "uri": "ai:///main.bal",
+        "lineRange": {
+          "fileName": "main.bal",
+          "startLine": {
+            "line": 5,
+            "offset": 8
+          },
+          "endLine": {
+            "line": 5,
+            "offset": 26
+          }
+        },
+        "previousLineRange": {
+          "fileName": "main.bal",
+          "startLine": {
+            "line": 5,
+            "offset": 8
+          },
+          "endLine": {
+            "line": 5,
+            "offset": 25
+          }
+        },
+        "metadata": {
+          "accessor": "post",
+          "servicePath": "/orders",
+          "serviceType": "http",
+          "resourcePath": ".",
           "functionKind": "resource"
         }
       },

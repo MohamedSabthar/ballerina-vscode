@@ -886,8 +886,10 @@ public class SemanticDiffComputer {
         ServiceMemberMap original = extractServiceMembers(originalService);
         ServiceMemberMap modified = extractServiceMembers(modifiedService);
         String servicePath = getServicePath(modifiedService);
-        String serviceType = modifiedServiceTypes.resolve(modifiedService).orElse(null);
-        analyzeMethodChanges(original.getObjectMethods(), modified.getObjectMethods(), servicePath, serviceType);
+        String originalServiceType = originalServiceTypes.resolve(originalService).orElse(null);
+        String modifiedServiceType = modifiedServiceTypes.resolve(modifiedService).orElse(null);
+        analyzeMethodChanges(original.getObjectMethods(), modified.getObjectMethods(), servicePath,
+                originalServiceType, modifiedServiceType);
     }
 
     /**
@@ -896,17 +898,20 @@ public class SemanticDiffComputer {
      * @param originalMethods Map of original method names to their definition nodes
      * @param modifiedMethods Map of modified method names to their definition nodes
      * @param servicePath     the base path of the service containing these methods
-     * @param serviceType     the type of that service, or null when unknown
+     * @param originalServiceType the original service's type, or null when unknown; used for deletions
+     * @param modifiedServiceType the modified service's type, or null when unknown
      */
     private void analyzeMethodChanges(Map<String, FunctionDefinitionNode> originalMethods,
                                       Map<String, FunctionDefinitionNode> modifiedMethods,
                                       String servicePath,
-                                      String serviceType) {
+                                      String originalServiceType,
+                                      String modifiedServiceType) {
 
         originalMethods.forEach((key, originalMethod) -> {
             if (!modifiedMethods.containsKey(key)) {
                 LineRange lineRange = originalMethod.lineRange();
-                Map<String, String> metadata = buildServiceMemberMetadata(originalMethod, servicePath, serviceType);
+                Map<String, String> metadata =
+                        buildServiceMemberMetadata(originalMethod, servicePath, originalServiceType);
                 SemanticDiff diff = new SemanticDiff(ChangeType.DELETION, NodeKind.OBJECT_FUNCTION,
                         resolveUri(lineRange.fileName()), lineRange, metadata);
                 this.semanticDiffs.add(diff);
@@ -914,7 +919,8 @@ public class SemanticDiffComputer {
             }
         });
         modifiedMethods.forEach((key, modifiedMethod) -> {
-            Map<String, String> metadata = buildServiceMemberMetadata(modifiedMethod, servicePath, serviceType);
+            Map<String, String> metadata =
+                    buildServiceMemberMetadata(modifiedMethod, servicePath, modifiedServiceType);
             if (originalMethods.containsKey(key)) {
                 FunctionDefinitionNode originalMethod = originalMethods.get(key);
                 compareFunctionBodies(originalMethod, modifiedMethod, NodeKind.OBJECT_FUNCTION, metadata);
