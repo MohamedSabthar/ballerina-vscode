@@ -213,6 +213,40 @@ describe("CheckpointService", () => {
             expect(notify.methods()).toEqual(["tooLarge"]);
         });
 
+        it("takes the turn after an over-limit one as a full baseline, keeping what the failed turn stored", async () => {
+            const svc = service();
+            const previous = (await svc.capture("msg-1"))!;
+            config.maxSnapshotSize = 8;
+            fs.writeFileSync(at("main.bal"), "// a much larger edit than the limit allows\n");
+            const remove = jest.spyOn(store, "remove");
+            const backendCapture = jest.spyOn(contentStore, "capture");
+
+            await expect(svc.capture("msg-2", { previous })).resolves.toBeNull();
+            const next = await svc.capture("msg-3", { previous });
+
+            expect(next).not.toBeNull();
+            expect(backendCapture.mock.calls[0][0].previous).toBe(previous);
+            expect(backendCapture.mock.calls[1][0].previous).toBeUndefined();
+            expect(remove).not.toHaveBeenCalled();
+            expect(notify.methods()).toEqual(["tooLarge"]);
+            await expect(svc.capture("msg-4", { previous: next! })).resolves.not.toBeNull();
+            expect(backendCapture.mock.calls[2][0].previous).toBe(next);
+        });
+
+        it("stamps a checkpoint with the time its scan started", async () => {
+            const findFiles = workspace.findFiles;
+            workspace.findFiles = async (include?: unknown, exclude?: unknown) => {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                return findFiles(include, exclude);
+            };
+            const before = Date.now();
+
+            const cp = (await service().capture("msg-1"))!;
+
+            expect(cp.timestamp).toBeGreaterThanOrEqual(before);
+            expect(cp.timestamp).toBeLessThan(before + 100);
+        });
+
         it("names the large files it left out, once per session", async () => {
             fs.writeFileSync(at("dataset.csv"), "x".repeat(64));
             config.maxFileSize = 48;

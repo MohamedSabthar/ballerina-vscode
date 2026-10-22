@@ -67,6 +67,8 @@ const toPosix = (p: string) => p.split(path.sep).join('/');
 
 export class CheckpointService {
     private readonly backends = new Map<string, CheckpointBackend>();
+    // The blobs of an over-limit turn stay stored, so a fresh baseline takes them in instead of hitting the limit again.
+    private baselineNext = false;
 
     constructor(private readonly deps: CheckpointServiceDeps) {
         if (CURRENT_CHECKPOINT_SCHEMA_VERSION !== SUPPORTED_CHECKPOINT_SCHEMA_VERSION) {
@@ -118,13 +120,15 @@ export class CheckpointService {
         const limits = resolveCaptureLimits({ maxFileSize: config.maxFileSize, maxNewBytes: config.maxSnapshotSize });
 
         try {
+            const scanStartedAt = Date.now();
             const allFiles = await scanWorkspace(workspaceRoot, config.ignorePatterns);
             const result = await this.backends.get(this.deps.defaultKind)!.capture({
                 workspaceRoot: workspaceRoot.fsPath,
                 files: allFiles,
-                previous: opts.previous,
+                previous: this.baselineNext ? undefined : opts.previous,
                 limits
             });
+            this.baselineNext = false;
 
             const tooLarge = result.skipped.filter(s => s.reason === 'tooLarge').map(s => s.path);
             if (tooLarge.length > 0) {
@@ -134,7 +138,7 @@ export class CheckpointService {
             return {
                 id: generateId(),
                 messageId,
-                timestamp: Date.now(),
+                timestamp: scanStartedAt,
                 ...result.fields,
                 fileList: allFiles.map(file => file.path),
                 snapshotSize: result.newBytes,
@@ -147,6 +151,7 @@ export class CheckpointService {
                 // Fail closed rather than save a partial checkpoint that silently leaves
                 // later-scanned files unrevertible on restore.
                 console.warn(`[Checkpoint] ${error.message} — aborting capture, no partial checkpoint will be saved`);
+                this.baselineNext = true;
                 this.deps.notify.tooLarge();
                 return null;
             }

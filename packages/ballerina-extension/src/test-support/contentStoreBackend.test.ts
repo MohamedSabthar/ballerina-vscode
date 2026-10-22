@@ -25,7 +25,6 @@ import { Uri, workspace } from './__mocks__/vscode';
 import { FsBlobStore } from '../views/ai-panel/checkpoint/blobStore';
 import { ContentStoreBackend } from '../views/ai-panel/checkpoint/backends/contentStoreBackend';
 import {
-    BlobStore,
     CaptureContext,
     CheckpointContentUnavailableError,
     CheckpointTooLargeError,
@@ -205,6 +204,16 @@ describe('ContentStoreBackend', () => {
         expect(resolved.get('added.bal')).toEqual({ state: 'absent' });
     });
 
+    it('re-reads a file modified after the previous scan started, even well into a long capture', async () => {
+        write('main.bal', '// main\n');
+        const { cp: previous } = await captureCp({}, OLD - 5000);
+        reads = [];
+
+        await captureCp({ previous });
+
+        expect(reads).toEqual(['main.bal']);
+    });
+
     it('re-reads a file whose mtime is within 2 s of the previous capture', async () => {
         write('main.bal', '// main\n');
         const { cp: previous } = await captureCp({}, OLD + 1500);
@@ -254,32 +263,18 @@ describe('ContentStoreBackend', () => {
         expect(await backend.restoreCandidates(cp, scan())).toEqual(['main.bal']);
     });
 
-    it('re-puts a blob removed between reuse and the end of capture', async () => {
-        write('main.bal', '// main\n');
+    it('touches each reused blob once on an unchanged workspace', async () => {
+        write('a.bal', '// a\n');
+        write('b.bal', '// b\n');
+        write('c.bal', '// a\n');
         const { cp: previous } = await captureCp();
-        const id = hashOf(previous, 'main.bal');
-        let firstTouch = true;
-        const racing: BlobStore = {
-            put: b => store.put(b),
-            get: i => store.get(i),
-            sweep: (l, a) => store.sweep(l, a),
-            exists: () => store.exists(),
-            remove: i => store.remove(i),
-            touch: async i => {
-                const ok = await store.touch(i);
-                if (i === id && firstTouch) {
-                    firstTouch = false;
-                    fs.rmSync(blobFile(i));
-                }
-                return ok;
-            },
-        };
-        backend = new ContentStoreBackend(racing);
+        const touch = jest.spyOn(store, 'touch');
 
-        const { cp } = await captureCp({ previous });
+        await captureCp({ previous });
 
-        expect(hashOf(cp, 'main.bal')).toBe(id);
-        expect(fs.existsSync(blobFile(id))).toBe(true);
+        expect(touch.mock.calls.map(([id]) => id).sort()).toEqual(
+            [hashOf(previous, 'a.bal'), hashOf(previous, 'b.bal'), hashOf(previous, 'c.bal')].sort()
+        );
     });
 
     it('re-reads and re-puts a previous entry whose blob was swept', async () => {
@@ -323,7 +318,7 @@ describe('ContentStoreBackend', () => {
         ? fs.readdirSync(storeDir).flatMap(shard => fs.readdirSync(path.join(storeDir, shard))).filter(f => !f.endsWith('.tmp')).length
         : 0;
 
-    it('takes the full baseline when there is no previous checkpoint, whatever maxNewBytes says', async () => {
+    it('takes the full baseline when there is no previous checkpoint, up to 10x maxNewBytes', async () => {
         writeOverLimit('f');
 
         const { result } = await captureCp();
@@ -332,15 +327,40 @@ describe('ContentStoreBackend', () => {
         expect(result.skipped).toEqual([]);
     });
 
-    it('over the limit on top of a previous checkpoint: throws and removes only the blobs it created', async () => {
+    describe('baseline ceiling', () => {
+        const SMALL = { maxFileSize: 1024, maxNewBytes: 4096 };
+        const writeBytes = (total: number) => {
+            for (let i = 0; i * 1000 < total; i++) {
+                write(`h${String(i).padStart(4, '0')}.bin`, randomBytes(1000));
+            }
+        };
+
+        it('throws when a baseline adds more than 10x maxNewBytes', async () => {
+            writeBytes(SMALL.maxNewBytes * 10 + 2000);
+
+            await expect(captureCp({ limits: SMALL })).rejects.toBeInstanceOf(CheckpointTooLargeError);
+        });
+
+        it('takes a baseline under 10x maxNewBytes', async () => {
+            writeBytes(SMALL.maxNewBytes * 8);
+
+            const { result } = await captureCp({ limits: SMALL });
+
+            expect(result.newBytes).toBeGreaterThan(SMALL.maxNewBytes);
+        });
+    });
+
+    it('over the limit on top of a previous checkpoint: throws and keeps the blobs it stored', async () => {
         write('main.bal', '// main\n');
         const { cp: previous } = await captureCp();
         const baselineBlobs = blobCount();
+        const remove = jest.spyOn(store, 'remove');
         writeOverLimit('g');
 
         await expect(captureCp({ previous })).rejects.toBeInstanceOf(CheckpointTooLargeError);
 
-        expect(blobCount()).toBe(baselineBlobs);
+        expect(remove).not.toHaveBeenCalled();
+        expect(blobCount()).toBeGreaterThan(baselineBlobs);
         expect(fs.existsSync(blobFile(hashOf(previous, 'main.bal')))).toBe(true);
     });
 

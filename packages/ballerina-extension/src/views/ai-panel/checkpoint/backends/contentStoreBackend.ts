@@ -17,7 +17,6 @@
  */
 
 import * as crypto from 'crypto';
-import * as fs from 'fs';
 import type { Checkpoint, CheckpointFileEntry } from '@wso2/ballerina-core/lib/state-machine-types';
 import {
     BlobStore,
@@ -39,6 +38,7 @@ type Stored = { entry: CheckpointFileEntry; createdBytes: number };
 // Same-second and coarse-mtime filesystems can edit a file without moving its mtime past the capture.
 const MTIME_GUARD_MS = 2000;
 const GC_MIN_AGE_MS = 60 * 60 * 1000;
+const BASELINE_LIMIT_FACTOR = 10;
 
 const isHashEntry = (entry: CheckpointFileEntry | undefined): entry is HashEntry =>
     !!entry && 'hash' in entry;
@@ -64,37 +64,23 @@ export class ContentStoreBackend implements CheckpointBackend {
 
     async capture(ctx: CaptureContext): Promise<CaptureResult> {
         const limits = resolveCaptureLimits(ctx.limits);
-        // Without a checkpoint to build on, capping the baseline would leave the workspace unrevertible every turn.
+        // Capping the baseline at the turn limit would leave the workspace unrevertible every turn.
         if (!ctx.previous) {
-            limits.maxNewBytes = Number.MAX_SAFE_INTEGER;
+            limits.maxNewBytes *= BASELINE_LIMIT_FACTOR;
         }
         const files: Record<string, CheckpointFileEntry> = {};
         const counted = new Set<string>();
         let newBytes = 0;
-        const overLimit = () => {
+
+        for (const chunk of inChunks(ctx.files)) {
+            const stored = await Promise.all(chunk.map(file => this.captureFile(file, ctx, limits)));
+            chunk.forEach((file, i) => {
+                files[file.path] = stored[i].entry;
+                newBytes += countOnce(stored[i], counted);
+            });
             if (newBytes > limits.maxNewBytes) {
                 throw new CheckpointTooLargeError(`Checkpoint exceeded max new bytes (${newBytes} bytes)`);
             }
-        };
-
-        try {
-            for (const chunk of inChunks(ctx.files)) {
-                const stored = await Promise.all(chunk.map(file => this.captureFile(file, ctx, limits)));
-                chunk.forEach((file, i) => {
-                    files[file.path] = stored[i].entry;
-                    newBytes += countOnce(stored[i], counted);
-                });
-                overLimit();
-            }
-
-            newBytes += await this.restoreMissingBlobs(ctx.files, files, limits, counted);
-            overLimit();
-        } catch (error) {
-            if (error instanceof CheckpointTooLargeError) {
-                // `counted` holds exactly the blobs this capture created, so nothing an earlier checkpoint uses is removed.
-                await Promise.all([...counted].map(id => this.store.remove(id)));
-            }
-            throw error;
         }
 
         const skipped: CaptureResult['skipped'] = [];
@@ -184,8 +170,8 @@ export class ContentStoreBackend implements CheckpointBackend {
         if (!isHashEntry(entry) || entry.size !== file.size || entry.mtimeMs !== file.mtimeMs) {
             return undefined;
         }
-        // A 0 mtime means the scan could not stat the file, so it says nothing about the content.
-        if (file.mtimeMs === 0 || Math.abs(file.mtimeMs - previous.timestamp) < MTIME_GUARD_MS) {
+        // A 0 mtime means the scan could not stat the file; previous.timestamp is when that scan started.
+        if (file.mtimeMs === 0 || file.mtimeMs > previous.timestamp - MTIME_GUARD_MS) {
             return undefined;
         }
         return entry;
@@ -205,42 +191,6 @@ export class ContentStoreBackend implements CheckpointBackend {
         }
         const { id, created } = await this.store.put(bytes);
         return { entry: { hash: id, size: bytes.length, mtimeMs }, createdBytes: created ? bytes.length : 0 };
-    }
-
-    // A sweep running alongside this capture can remove a blob after it was reused or written.
-    private async restoreMissingBlobs(
-        scanned: ScannedFile[], files: Record<string, CheckpointFileEntry>, limits: Limits, counted: Set<string>
-    ): Promise<number> {
-        const pathsByHash = new Map<string, string[]>();
-        for (const [p, entry] of Object.entries(files)) {
-            if (isHashEntry(entry)) {
-                pathsByHash.set(entry.hash, [...(pathsByHash.get(entry.hash) ?? []), p]);
-            }
-        }
-        const byPath = new Map(scanned.map(file => [file.path, file]));
-        const missing: string[][] = [];
-        for (const chunk of inChunks([...pathsByHash])) {
-            const present = await Promise.all(chunk.map(([hash]) => this.store.touch(hash)));
-            chunk.forEach(([, paths], i) => present[i] || missing.push(paths));
-        }
-        let createdBytes = 0;
-        for (const paths of missing) {
-            for (const p of paths) {
-                const stored = await this.storeFile(await this.restat(byPath.get(p)), limits);
-                files[p] = stored.entry;
-                createdBytes += countOnce(stored, counted);
-            }
-        }
-        return createdBytes;
-    }
-
-    private async restat(file: ScannedFile): Promise<ScannedFile> {
-        try {
-            const stat = await fs.promises.stat(file.uri.fsPath);
-            return { ...file, size: stat.size, mtimeMs: stat.mtimeMs };
-        } catch {
-            return file;
-        }
     }
 
     private async resolveEntry(p: string, entry: CheckpointFileEntry | undefined, listed: boolean): Promise<ResolvedContent> {
