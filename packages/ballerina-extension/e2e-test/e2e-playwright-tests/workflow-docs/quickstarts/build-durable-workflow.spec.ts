@@ -183,7 +183,8 @@ export default function createTests() {
                 const panel = await ui.panel();
                 await ui.clickButton(panel, 'Add');
                 await ui.saveForm();
-                await expect(view.getByText(/Wait for payment/i).first()).toBeVisible();
+                // The node shows once the language server has regenerated the flow model, often past the 5 s default.
+                await expect(view.getByText(/Wait for payment/i).first()).toBeVisible({ timeout: 60000 });
             });
 
             // ---------------------------------------------------------------- Step 5
