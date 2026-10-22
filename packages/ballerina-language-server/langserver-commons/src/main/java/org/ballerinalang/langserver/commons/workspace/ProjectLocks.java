@@ -32,7 +32,7 @@ import java.util.concurrent.locks.Lock;
  * Compiling a package is not thread-safe in the compiler: two first-time compilations of the same project add to
  * the project's compiler plugin contexts, an unsynchronized list, at the same time. The workspace manager
  * serializes its own compilations with its per-project lock, so any other code that compiles a project the
- * workspace manager holds has to take that lock too, not a lock of its own.
+ * workspace manager holds has to take that lock too; a lock of its own alone is not enough.
  * <p>
  * The lock is asked of each owner when it is needed rather than recorded when a project is created: a workspace
  * manager creates contexts that never reach its project map, and on a reload replaces the map's contexts while an

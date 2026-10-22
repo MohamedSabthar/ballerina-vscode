@@ -792,22 +792,29 @@ public class PackageUtil {
     /**
      * Safely retrieves compilation from a project using a lock to ensure thread safety.
      * <p>
-     * A project the workspace manager holds is compiled under the workspace manager's own lock for it: the
-     * workspace manager compiles the same instance (diagnostics, for one), and a separate lock here would let the
-     * two compilations run at once, which the compiler does not support.
+     * A project the workspace manager holds is also compiled under the workspace manager's own lock for it: the
+     * workspace manager compiles the same instance (diagnostics, for one), and the path lock alone would let the
+     * two compilations run at once, which the compiler does not support. The path lock is still taken, because a
+     * caller holding an instance the workspace manager has since replaced gets no owner lock. The owner's lock is
+     * always taken first.
      *
      * @param balPackage The package from which to retrieve the compilation
      * @return The compilation of the project
      */
     public static PackageCompilation getCompilation(Package balPackage) {
         Project project = balPackage.project();
-        Lock lock = ProjectLocks.of(project)
-                .orElseGet(() -> PROJECT_LOCKS.computeIfAbsent(project.sourceRoot(), k -> new ReentrantLock()));
-        lock.lock();
+        Optional<Lock> ownerLock = ProjectLocks.of(project);
+        ReentrantLock pathLock = PROJECT_LOCKS.computeIfAbsent(project.sourceRoot(), k -> new ReentrantLock());
+        ownerLock.ifPresent(Lock::lock);
         try {
-            return balPackage.getCompilation();
+            pathLock.lock();
+            try {
+                return balPackage.getCompilation();
+            } finally {
+                pathLock.unlock();
+            }
         } finally {
-            lock.unlock();
+            ownerLock.ifPresent(Lock::unlock);
         }
     }
 
