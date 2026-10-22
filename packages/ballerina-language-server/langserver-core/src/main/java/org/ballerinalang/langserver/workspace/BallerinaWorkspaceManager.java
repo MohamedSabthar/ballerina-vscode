@@ -1860,13 +1860,14 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
     }
 
     /**
-     * Represents a map of Path to ProjectContext.
+     * Represents a map of Path to ProjectContext. It is written under different per-project locks and read without
+     * one (including by {@link ProjectLocks} from other threads), so it has to be a concurrent map.
      *
      * @param <K> cache key
      * @param <V> cache value Clear out front-faced cache implementation whenever a modification operation triggered for
      *            this map.
      */
-    private static class SourceRootToProjectMap<K, V> extends HashMap<K, V> {
+    private static class SourceRootToProjectMap<K, V> extends ConcurrentHashMap<K, V> {
 
         private static final long serialVersionUID = 19900410L;
         private final transient Map<Path, Path> cache;
