@@ -76,6 +76,37 @@ describe('FsBlobStore', () => {
         expect(fs.statSync(blobFile(first.id)).mtimeMs).toBeGreaterThan(before);
     });
 
+    it('rewrites an existing zero-length blob on put', async () => {
+        const store = new FsBlobStore(dir);
+        const bytes = Buffer.from('survives a crash');
+        const { id } = await store.put(bytes);
+        fs.truncateSync(blobFile(id), 0);
+
+        expect(await store.put(bytes)).toEqual({ id, created: true });
+        expect(await store.get(id)).toEqual(bytes);
+    });
+
+    it('syncs a new blob to disk before moving it into place', async () => {
+        const store = new FsBlobStore(dir);
+        const order: string[] = [];
+        const open = fs.promises.open;
+        jest.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof open>) => {
+            const handle = await open(...args);
+            const sync = handle.sync.bind(handle);
+            handle.sync = async () => { order.push('sync'); return sync(); };
+            return handle;
+        });
+        const rename = fs.promises.rename;
+        jest.spyOn(fs.promises, 'rename').mockImplementation(async (...args: Parameters<typeof rename>) => {
+            order.push('rename');
+            return rename(...args);
+        });
+
+        await store.put(Buffer.from('durable'));
+
+        expect(order).toEqual(['sync', 'rename']);
+    });
+
     it('returns undefined for an unknown id', async () => {
         expect(await new FsBlobStore(dir).get('ab'.repeat(32))).toBeUndefined();
     });

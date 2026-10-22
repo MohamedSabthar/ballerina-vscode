@@ -42,6 +42,16 @@ function isMissing(error: unknown): boolean {
     return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 }
 
+async function writeDurably(file: string, data: Buffer): Promise<void> {
+    const handle = await fs.promises.open(file, 'w');
+    try {
+        await handle.writeFile(data);
+        await handle.sync();
+    } finally {
+        await handle.close();
+    }
+}
+
 export class FsBlobStore implements BlobStore {
     constructor(private readonly dir: string, private readonly hooks?: FsBlobStoreHooks) {}
 
@@ -51,18 +61,18 @@ export class FsBlobStore implements BlobStore {
 
     async put(bytes: Buffer): Promise<{ id: string; created: boolean }> {
         const id = crypto.createHash('sha256').update(bytes).digest('hex');
-        if (await this.touch(id)) {
+        if (await this.touchNonEmpty(id)) {
             return { id, created: false };
         }
         const target = this.blobPath(id);
         await fs.promises.mkdir(path.dirname(target), { recursive: true });
         const temp = `${target}.${crypto.randomBytes(6).toString('hex')}${TEMP_SUFFIX}`;
         try {
-            await fs.promises.writeFile(temp, await gzip(bytes, { level: 1 }));
+            await writeDurably(temp, await gzip(bytes, { level: 1 }));
             await fs.promises.rename(temp, target);
         } catch (error) {
             const code = (error as NodeJS.ErrnoException)?.code;
-            if ((code === 'EEXIST' || code === 'EPERM') && fs.existsSync(target)) {
+            if ((code === 'EEXIST' || code === 'EPERM') && await this.touchNonEmpty(id).catch(() => false)) {
                 await fs.promises.rm(temp, { force: true });
                 return { id, created: false };
             }
@@ -178,6 +188,21 @@ export class FsBlobStore implements BlobStore {
             }
         }
         return deleted;
+    }
+
+    // A crash can leave a zero-length blob at the final path; reusing it would only fail at revert time.
+    private async touchNonEmpty(id: string): Promise<boolean> {
+        try {
+            if ((await fs.promises.stat(this.blobPath(id))).size === 0) {
+                return false;
+            }
+        } catch (error) {
+            if (isMissing(error)) {
+                return false;
+            }
+            throw error;
+        }
+        return this.touch(id);
     }
 
     private async removeCorrupt(id: string): Promise<void> {
