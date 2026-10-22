@@ -202,11 +202,16 @@ public class TestWorkspaceManager {
         Path packageFile = RESOURCE_DIRECTORY.resolve("workspace-projects").resolve("simple-workspace")
                 .resolve("package-a").resolve("main.bal").toAbsolutePath();
         openFile(packageFile);
+        Path packageRoot = workspaceManager.projectRoot(packageFile);
+        BallerinaWorkspaceManager.ProjectContext beforeReload = workspaceManager.sourceRootToProject.get(packageRoot);
 
         workspaceManager.didChangeWatched(changedToml,
                 new FileEvent(changedToml.toUri().toString(), FileChangeType.Changed));
 
-        Assert.assertFalse(workspaceManager.sourceRootToProject.isEmpty());
+        // Without a reload every entry stays consistent and the checks below prove nothing.
+        BallerinaWorkspaceManager.ProjectContext afterReload = workspaceManager.sourceRootToProject.get(packageRoot);
+        Assert.assertNotNull(afterReload, "The package dropped out of the map on " + changedToml);
+        Assert.assertNotSame(afterReload, beforeReload, "The change to " + changedToml + " did not reload the package");
         workspaceManager.sourceRootToProject.forEach((root, projectContext) -> {
             Optional<Lock> lock = ProjectLocks.of(projectContext.project());
             Assert.assertTrue(lock.isPresent(), "No lock found for the project at " + root);

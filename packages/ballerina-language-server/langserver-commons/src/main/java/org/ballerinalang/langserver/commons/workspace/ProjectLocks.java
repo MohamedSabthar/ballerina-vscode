@@ -58,6 +58,15 @@ public final class ProjectLocks {
     }
 
     /**
+     * Removes an owner added with {@link #addOwner(Owner)}.
+     *
+     * @param owner the owner to stop asking
+     */
+    public static void removeOwner(Owner owner) {
+        OWNERS.remove(owner);
+    }
+
+    /**
      * Returns the lock that guards the given project instance.
      *
      * @param project the project instance

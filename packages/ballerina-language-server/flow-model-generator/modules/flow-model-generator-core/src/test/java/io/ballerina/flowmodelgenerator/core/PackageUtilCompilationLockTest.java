@@ -27,7 +27,6 @@ import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import java.io.IOException;
-import java.lang.ref.Reference;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
@@ -40,7 +39,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>The compiler does not support two first-time compilations of the same project at once: both add to the
  * project's compiler plugin contexts, an unsynchronized list. The workspace manager compiles its projects under its
- * own per-project lock, so a compilation started here has to wait for that lock, not take a separate one.</p>
+ * own per-project lock, so a compilation started here has to wait for that lock too.</p>
  */
 public class PackageUtilCompilationLockTest {
 
@@ -50,23 +49,24 @@ public class PackageUtilCompilationLockTest {
     public void testCompilationWaitsForOwnerLock() throws Exception {
         Project project = SingleFileProject.load(singleFile());
         ReentrantLock ownerLock = new ReentrantLock(true);
-        // ProjectLocks holds owners weakly; the local keeps this one reachable until the fence below.
         ProjectLocks.Owner owner = candidate -> candidate == project ? Optional.of(ownerLock) : Optional.empty();
         ProjectLocks.addOwner(owner);
-
-        CompletableFuture<PackageCompilation> compilation;
-        ownerLock.lock();
         try {
-            compilation = CompletableFuture.supplyAsync(() -> PackageUtil.getCompilation(project));
-            // The compilation is queued on the owner's lock, not running under a lock of its own.
-            awaitQueued(ownerLock);
-            Assert.assertFalse(compilation.isDone(), "Compiled while the owner held the project's lock");
-        } finally {
-            ownerLock.unlock();
-        }
+            CompletableFuture<PackageCompilation> compilation;
+            ownerLock.lock();
+            try {
+                compilation = CompletableFuture.supplyAsync(() -> PackageUtil.getCompilation(project));
+                // The compilation is queued on the owner's lock, not running under the path lock alone.
+                awaitQueued(ownerLock);
+                Assert.assertFalse(compilation.isDone(), "Compiled while the owner held the project's lock");
+            } finally {
+                ownerLock.unlock();
+            }
 
-        Assert.assertNotNull(compilation.get(WAIT_MILLIS, TimeUnit.MILLISECONDS));
-        Reference.reachabilityFence(owner);
+            Assert.assertNotNull(compilation.get(WAIT_MILLIS, TimeUnit.MILLISECONDS));
+        } finally {
+            ProjectLocks.removeOwner(owner);
+        }
     }
 
     @Test(description = "A project no owner holds still compiles; the fallback lock itself is not observed here")
