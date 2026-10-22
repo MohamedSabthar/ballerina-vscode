@@ -3,10 +3,11 @@ name: PR Build
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
 
+# Any other label gets a group of its own, so it can't cancel the build in progress.
 concurrency:
-  group: ${{ github.ref }}
+  group: ${{ github.ref }}${{ github.event.action == 'labeled' && !startsWith(github.event.label.name, 'Checks/') && github.event.label.name != 'Runner/AWS' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 # Reusable workflows inherit caller permissions. Granting packages: read
@@ -19,7 +20,13 @@ permissions:
 jobs:
   changes:
     name: Detect changes
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    # 'labeled' re-runs only for an opt-in label (Checks/*, Runner/AWS).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.draft == false &&
+       (github.event.action != 'labeled' ||
+        startsWith(github.event.label.name, 'Checks/') ||
+        github.event.label.name == 'Runner/AWS'))
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.filter.outputs.build }}
