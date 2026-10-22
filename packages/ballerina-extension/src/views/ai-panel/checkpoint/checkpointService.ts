@@ -217,8 +217,26 @@ export class CheckpointService {
         if (!backend) {
             throw new CheckpointUnknownFormatError();
         }
-        const resolved = await backend.resolve(cp, paths.map(toPosix));
-        return new Map([...resolved].map(([p, content]) => [toPosix(p), content]));
+        const posixPaths = paths.map(toPosix);
+        try {
+            return await backend.resolve(cp, posixPaths);
+        } catch (error) {
+            if (!(error instanceof CheckpointContentUnavailableError)) {
+                throw error;
+            }
+        }
+        const originals = new Map<string, OriginalContent>();
+        for (const p of posixPaths) {
+            try {
+                originals.set(p, (await backend.resolve(cp, [p])).get(p));
+            } catch (error) {
+                if (!(error instanceof CheckpointContentUnavailableError)) {
+                    throw error;
+                }
+                originals.set(p, { state: 'unavailable', reason: 'unreadable' });
+            }
+        }
+        return originals;
     }
 
     async collectGarbage(live: Iterable<Checkpoint>, opts: { minAgeMs?: number } = {}): Promise<void> {

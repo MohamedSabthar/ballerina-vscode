@@ -43,6 +43,7 @@ import * as restoreApplier from "../views/ai-panel/checkpoint/restoreApplier";
 import { CheckpointConfig, DEFAULT_CHECKPOINT_CONFIG } from "../views/ai-panel/checkpoint/checkpointConfig";
 import { CheckpointService, getCheckpointService } from "../views/ai-panel/checkpoint/checkpointService";
 import { VscodeCheckpointNotifier } from "../views/ai-panel/checkpoint/checkpointNotifier";
+import { scanWorkspace } from "../views/ai-panel/checkpoint/workspaceScanner";
 import { FsBlobStore } from "../views/ai-panel/checkpoint/blobStore";
 import { InlineSnapshotBackend } from "../views/ai-panel/checkpoint/backends/inlineSnapshotBackend";
 import { ContentStoreBackend } from "../views/ai-panel/checkpoint/backends/contentStoreBackend";
@@ -470,6 +471,26 @@ describe("CheckpointService", () => {
                 backends: [inline], defaultKind: "inline", config: () => config, notify: notify.notifier,
             })).toThrow(/supported version 2/);
         });
+    });
+});
+
+describe("scanWorkspace", () => {
+    let root: string;
+
+    beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "checkpoint-scan-")); });
+    afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+    it("lists a file it cannot stat as 0/0 and keeps the found order", async () => {
+        const names = Array.from({ length: 40 }, (_, i) => `f${String(i).padStart(2, "0")}.bal`);
+        names.forEach(name => fs.writeFileSync(path.join(root, name), `// ${name}\n`));
+        workspace.findFiles = () => Promise.resolve([...names, "gone.bal"].map(name => Uri.file(path.join(root, name))));
+
+        const files = await scanWorkspace(Uri.file(root) as never, []);
+
+        expect(files.map(f => f.path)).toEqual([...names, "gone.bal"]);
+        expect(files[0]).toMatchObject({ size: `// ${names[0]}\n`.length });
+        expect(files[0].mtimeMs).toBeGreaterThan(0);
+        expect(files[40]).toMatchObject({ path: "gone.bal", size: 0, mtimeMs: 0 });
     });
 });
 
