@@ -101,6 +101,8 @@ export const sidePanelOpens = (webview: Frame, timeout: number) =>
 export async function openPaletteBelow(webview: Frame, nodeText: string): Promise<SidePanel> {
     const canvas = webview.getByTestId('bi-diagram-canvas');
     await canvas.waitFor({ timeout: 60000 });
+    // The canvas is read-only while a side panel is open, so a panel left from the previous step eats the click.
+    await closeSidePanels(webview);
     const sidePanel = new SidePanel(webview, page.page);
     const emptyNodeButton = canvas.locator('[data-testid^="empty-node-add-button"]').first();
     const node = canvas.getByText(nodeText, { exact: true }).filter({ visible: true }).last();
@@ -127,7 +129,7 @@ export async function openPaletteBelow(webview: Frame, nodeText: string): Promis
         for (let attempt = 0; attempt < 3; attempt++) {
             await emptyNodeButton.click({ force: true, timeout: 5000 })
                 .catch(() => emptyNodeButton.dispatchEvent('click', undefined, { timeout: 5000 }).catch(() => undefined));
-            if (await sidePanelOpens(webview, 5000)) {
+            if (await paletteOpens(webview, 5000)) {
                 await sidePanel.init();
                 return sidePanel;
             }
@@ -156,14 +158,38 @@ export async function openPaletteBelow(webview: Frame, nodeText: string): Promis
             } else {
                 await page.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
             }
-            if (await sidePanelOpens(webview, 3000)) {
+            if (await paletteOpens(webview, 3000)) {
                 await sidePanel.init();
                 return sidePanel;
             }
         }
         await page.page.waitForTimeout(1000);
     }
-    throw new Error(`the + below '${nodeText}' did not open the side panel`);
+    throw new Error(`the + below '${nodeText}' did not open the node palette`);
+}
+
+// Closes every open side panel through its close button.
+async function closeSidePanels(webview: Frame): Promise<void> {
+    const close = webview.getByTestId('close-panel-btn').filter({ visible: true }).first();
+    for (let i = 0; i < 3 && await close.isVisible().catch(() => false); i++) {
+        await close.click({ force: true, timeout: 3000 }).catch(() => undefined);
+        await page.page.waitForTimeout(500);
+    }
+}
+
+// True once the node palette shows. Any other panel that opened (a leftover form or list) is closed so the
+// caller's next click lands on the canvas.
+async function paletteOpens(webview: Frame, timeout: number): Promise<boolean> {
+    if (!await sidePanelOpens(webview, timeout)) {
+        return false;
+    }
+    const group = webview.getByTestId('side-panel').filter({ visible: true }).last()
+        .getByText(/^(Control|Statement)$/).first();
+    if (await group.waitFor({ state: 'visible', timeout: 10000 }).then(() => true, () => false)) {
+        return true;
+    }
+    await closeSidePanels(webview);
+    return false;
 }
 
 // A palette item of a section. The section's state is remembered, so a click on its header while the items
@@ -173,7 +199,8 @@ export async function paletteItem(sidePanel: SidePanel, section: string, label: 
     const item = panel.getByText(label, { exact: true }).last();
     const shows = (ms: number) => item.waitFor({ state: 'visible', timeout: ms }).then(() => true, () => false);
     for (let attempt = 0; attempt < 2 && !await shows(10000); attempt++) {
-        await sidePanel.expandSection(section);
+        // A header that is not drawn yet is left to the search fallback below.
+        await sidePanel.expandSection(section).catch(() => undefined);
     }
     if (!await shows(30000)) {
         // The section's items are fetched after the headers and are not always there to expand into; the
