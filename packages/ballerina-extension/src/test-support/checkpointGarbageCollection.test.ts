@@ -289,4 +289,119 @@ describe("checkpoint garbage collection", () => {
         expect(fs.existsSync(checkpointFile)).toBe(false);
         expect(fs.existsSync(`${checkpointFile}.unreadable`)).toBe(true);
     });
+
+    it("leaves a checkpoint it cannot read in place and skips the run", async () => {
+        const storage = new ChatStateStorage(GC_NOW);
+        const doomed = storage.createNewThread(root);
+        fs.writeFileSync(at("only.bal"), "// only the doomed thread\n");
+        await captured(storage, doomed, "doomed");
+        fs.rmSync(at("only.bal"));
+
+        const otherWindow = new ChatStateStorage(GC_NOW);
+        const otherThread = otherWindow.createNewThread(root);
+        const otherGen = await captured(otherWindow, otherThread, "other");
+        const checkpointFile = path.join(storage.getThreadDir(root, otherThread), "checkpoints", `${otherGen}.snapshot.gz`);
+        const readFile = fs.promises.readFile;
+        jest.spyOn(fs.promises, "readFile").mockImplementation(((file: fs.PathLike, ...rest: unknown[]) =>
+            String(file) === checkpointFile
+                ? Promise.reject(Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" }))
+                : (readFile as (...a: unknown[]) => Promise<Buffer>)(file, ...rest)) as typeof readFile);
+        const sweep = jest.spyOn(FsBlobStore.prototype, "sweep");
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+        await storage.deleteThread(root, doomed);
+        await storage.flushCheckpointGc(root);
+
+        expect(fs.existsSync(checkpointFile)).toBe(true);
+        expect(fs.existsSync(`${checkpointFile}.unreadable`)).toBe(false);
+        expect(sweep).not.toHaveBeenCalled();
+        expect(fs.existsSync(blobOf("// only the doomed thread\n"))).toBe(true);
+    });
+
+    it("loads persisted checkpoints without holding up a capture", async () => {
+        const storage = new ChatStateStorage(GC_NOW);
+        const doomed = storage.createNewThread(root);
+        fs.writeFileSync(at("only.bal"), "// only the doomed thread\n");
+        await captured(storage, doomed, "doomed");
+        fs.rmSync(at("only.bal"));
+        const otherWindow = new ChatStateStorage(GC_NOW);
+        await captured(otherWindow, otherWindow.createNewThread(root), "other");
+
+        const persistence = (storage as unknown as { persistenceStore: CopilotPersistenceStore }).persistenceStore;
+        const load = persistence.loadCheckpointAsync.bind(persistence);
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let loading!: () => void;
+        const loadStarted = new Promise<void>(resolve => { loading = resolve; });
+        jest.spyOn(persistence, "loadCheckpointAsync").mockImplementation(async (...args) => {
+            loading();
+            await gate;
+            return load(...args);
+        });
+        const sweep = jest.spyOn(FsBlobStore.prototype, "sweep");
+
+        await storage.deleteThread(root, doomed);
+        const gc = storage.flushCheckpointGc(root);
+        await loadStarted;
+        fs.writeFileSync(at("during.bal"), "// captured while GC loads\n");
+        const { id } = storage.addGeneration(root, storage.createNewThread(root), "during", {});
+        const outcome = await Promise.race([
+            storage.waitForCheckpointCapture(id).then(() => "captured"),
+            new Promise(resolve => setTimeout(() => resolve("blocked"), 1000)),
+        ]);
+        release();
+        await gc;
+
+        expect(outcome).toBe("captured");
+        expect(sweep).toHaveBeenCalled();
+        expect(fs.existsSync(blobOf("// captured while GC loads\n"))).toBe(true);
+        expect(fs.existsSync(blobOf("// only the doomed thread\n"))).toBe(false);
+    });
+
+    describe("with roots that share one workspace identity", () => {
+        let otherRoot: string;
+
+        beforeEach(() => {
+            process.env.CLOUD_INITIAL_PROJECT_ID = "shared-project";
+            otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), "checkpoint-gc-ws-other-"));
+        });
+
+        afterEach(() => {
+            delete process.env.CLOUD_INITIAL_PROJECT_ID;
+            fs.rmSync(otherRoot, { recursive: true, force: true });
+        });
+
+        it("runs a capture for one root only after a sweep for the other", async () => {
+            const storage = new ChatStateStorage(GC_NOW);
+            const doomed = storage.createNewThread(root);
+            fs.writeFileSync(at("main.bal"), "// main\n");
+            await captured(storage, doomed, "doomed");
+
+            let release!: () => void;
+            const gate = new Promise<void>(resolve => { release = resolve; });
+            let sweeping!: () => void;
+            const sweepStarted = new Promise<void>(resolve => { sweeping = resolve; });
+            const sweep = FsBlobStore.prototype.sweep;
+            jest.spyOn(FsBlobStore.prototype, "sweep").mockImplementation(async function (this: FsBlobStore, ...args) {
+                sweeping();
+                await gate;
+                return sweep.apply(this, args);
+            });
+            const otherService = getCheckpointService(otherRoot);
+            const otherCapture = jest.spyOn(otherService, "capture");
+
+            await storage.deleteThread(root, doomed);
+            const gc = storage.flushCheckpointGc(root);
+            await sweepStarted;
+            const { id } = storage.addGeneration(otherRoot, storage.createNewThread(otherRoot), "other root", {});
+            await new Promise(resolve => setTimeout(resolve, 50));
+            const calledDuringSweep = otherCapture.mock.calls.length;
+            release();
+            await gc;
+            await storage.waitForCheckpointCapture(id);
+
+            expect(calledDuringSweep).toBe(0);
+            expect(otherCapture).toHaveBeenCalledTimes(1);
+        });
+    });
 });
