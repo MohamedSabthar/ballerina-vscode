@@ -190,19 +190,23 @@ export class FsBlobStore implements BlobStore {
         return deleted;
     }
 
-    // A crash can leave a zero-length blob at the final path; reusing it would only fail at revert time.
-    private async touchNonEmpty(id: string): Promise<boolean> {
+    async has(id: string): Promise<boolean> {
+        if (!BLOB_ID.test(id)) {
+            return false;
+        }
         try {
-            if ((await fs.promises.stat(this.blobPath(id))).size === 0) {
-                return false;
-            }
+            return (await fs.promises.stat(this.blobPath(id))).size > 0;
         } catch (error) {
             if (isMissing(error)) {
                 return false;
             }
             throw error;
         }
-        return this.touch(id);
+    }
+
+    // A crash can leave a zero-length blob at the final path; reusing it would only fail at revert time.
+    private async touchNonEmpty(id: string): Promise<boolean> {
+        return (await this.has(id)) && this.touch(id);
     }
 
     private async removeCorrupt(id: string): Promise<void> {

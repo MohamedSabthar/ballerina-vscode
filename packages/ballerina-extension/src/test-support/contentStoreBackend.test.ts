@@ -27,6 +27,7 @@ import { ContentStoreBackend } from '../views/ai-panel/checkpoint/backends/conte
 import {
     CaptureContext,
     CheckpointContentUnavailableError,
+    BlobStore,
     CheckpointTooLargeError,
     ScannedFile,
 } from '../views/ai-panel/checkpoint/types';
@@ -139,6 +140,33 @@ describe('ContentStoreBackend', () => {
         expect(filesOf(cp)['locked.txt']).toMatchObject({ skipped: 'unreadable' });
         expect(result.skipped).toEqual([{ path: 'locked.txt', reason: 'unreadable' }]);
         expect((await backend.resolve(cp, ['locked.txt'])).get('locked.txt')).toEqual({ state: 'unavailable', reason: 'unreadable' });
+    });
+
+    it('re-stores a reused blob that another window sweeps away after it was touched', async () => {
+        write('main.bal', '// main\n');
+        const { cp: previous } = await captureCp();
+        const id = hashOf(previous, 'main.bal');
+        const sweptElsewhere: BlobStore = {
+            put: b => store.put(b),
+            get: i => store.get(i),
+            has: i => store.has(i),
+            remove: i => store.remove(i),
+            sweep: (l, a) => store.sweep(l, a),
+            exists: () => store.exists(),
+            touch: async i => {
+                const ok = await store.touch(i);
+                if (i === id) {
+                    fs.rmSync(blobFile(i));
+                }
+                return ok;
+            },
+        };
+        backend = new ContentStoreBackend(sweptElsewhere);
+
+        const { cp } = await captureCp({ previous });
+
+        expect(hashOf(cp, 'main.bal')).toBe(id);
+        expect(fs.existsSync(blobFile(id))).toBe(true);
     });
 
     it('reuses an unchanged file from previous without reading it, and touches its blob', async () => {

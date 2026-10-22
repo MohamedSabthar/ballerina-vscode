@@ -236,7 +236,9 @@ describe("CheckpointService", () => {
 
         it("stamps a checkpoint with the time its scan started", async () => {
             const findFiles = workspace.findFiles;
+            let scanCalledAt = 0;
             workspace.findFiles = async (include?: unknown, exclude?: unknown) => {
+                scanCalledAt = Date.now();
                 await new Promise(resolve => setTimeout(resolve, 100));
                 return findFiles(include, exclude);
             };
@@ -245,7 +247,7 @@ describe("CheckpointService", () => {
             const cp = (await service().capture("msg-1"))!;
 
             expect(cp.timestamp).toBeGreaterThanOrEqual(before);
-            expect(cp.timestamp).toBeLessThan(before + 100);
+            expect(cp.timestamp).toBeLessThanOrEqual(scanCalledAt);
         });
 
         it("names the large files it left out, once per session", async () => {

@@ -83,6 +83,11 @@ export class ContentStoreBackend implements CheckpointBackend {
             }
         }
 
+        newBytes += await this.restoreMissingBlobs(ctx.files, files, limits, counted);
+        if (newBytes > limits.maxNewBytes) {
+            throw new CheckpointTooLargeError(`Checkpoint exceeded max new bytes (${newBytes} bytes)`);
+        }
+
         const skipped: CaptureResult['skipped'] = [];
         for (const [p, entry] of Object.entries(files)) {
             if (!isHashEntry(entry)) {
@@ -175,6 +180,32 @@ export class ContentStoreBackend implements CheckpointBackend {
             return undefined;
         }
         return entry;
+    }
+
+    // A sweep in another window can unlink a reused blob after this capture touched it; the in-window lock can't stop that.
+    private async restoreMissingBlobs(
+        scanned: ScannedFile[], files: Record<string, CheckpointFileEntry>, limits: Limits, counted: Set<string>
+    ): Promise<number> {
+        const hashes = [...new Set(Object.values(files).filter(isHashEntry).map(entry => entry.hash))];
+        const missing = new Set<string>();
+        for (const chunk of inChunks(hashes)) {
+            const present = await Promise.all(chunk.map(hash => this.store.has(hash)));
+            chunk.forEach((hash, i) => present[i] || missing.add(hash));
+        }
+        if (missing.size === 0) {
+            return 0;
+        }
+        const byPath = new Map(scanned.map(file => [file.path, file]));
+        let createdBytes = 0;
+        for (const [p, entry] of Object.entries(files)) {
+            const file = byPath.get(p);
+            if (isHashEntry(entry) && missing.has(entry.hash) && file) {
+                const stored = await this.storeFile(file, limits);
+                files[p] = stored.entry;
+                createdBytes += countOnce(stored, counted);
+            }
+        }
+        return createdBytes;
     }
 
     private async storeFile(file: ScannedFile, limits: Limits): Promise<Stored> {

@@ -64,6 +64,7 @@ export interface BlobStore {
     put(bytes: Buffer): Promise<{ id: string; created: boolean }>;
     get(id: string): Promise<Buffer | undefined>;
     touch(id: string): Promise<boolean>;
+    has(id: string): Promise<boolean>;
     remove(id: string): Promise<void>;
     sweep(live: ReadonlySet<string>, minAgeMs: number): Promise<number>;
     exists(): boolean;
