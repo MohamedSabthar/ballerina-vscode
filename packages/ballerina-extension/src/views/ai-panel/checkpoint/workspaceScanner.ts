@@ -20,6 +20,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ScannedFile } from './types';
+import { inChunks } from './backends/captureSupport';
 
 export async function scanWorkspace(root: vscode.Uri, ignorePatterns: string[]): Promise<ScannedFile[]> {
     const include = new vscode.RelativePattern(root, '**/*');
@@ -27,14 +28,20 @@ export async function scanWorkspace(root: vscode.Uri, ignorePatterns: string[]):
         ? new vscode.RelativePattern(root, `{${ignorePatterns.join(',')}}`)
         : null;
     const uris = await vscode.workspace.findFiles(include, exclude);
-    return uris.map(uri => {
-        const relativePath = path.relative(root.fsPath, uri.fsPath).split(path.sep).join('/');
-        // A file that cannot be stat'd is still listed: dropping it would let a restore delete it.
-        try {
-            const stats = fs.statSync(uri.fsPath);
-            return { path: relativePath, uri, size: stats.size, mtimeMs: stats.mtimeMs };
-        } catch {
-            return { path: relativePath, uri, size: 0, mtimeMs: 0 };
-        }
-    });
+    const files: ScannedFile[] = [];
+    for (const chunk of inChunks(uris)) {
+        files.push(...await Promise.all(chunk.map(uri => statFile(root, uri))));
+    }
+    return files;
+}
+
+async function statFile(root: vscode.Uri, uri: vscode.Uri): Promise<ScannedFile> {
+    const relativePath = path.relative(root.fsPath, uri.fsPath).split(path.sep).join('/');
+    // A file that cannot be stat'd is still listed: dropping it would let a restore delete it.
+    try {
+        const stats = await fs.promises.stat(uri.fsPath);
+        return { path: relativePath, uri, size: stats.size, mtimeMs: stats.mtimeMs };
+    } catch {
+        return { path: relativePath, uri, size: 0, mtimeMs: 0 };
+    }
 }

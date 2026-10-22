@@ -428,6 +428,24 @@ describe("CheckpointService", () => {
             expect(originals.get("added.bal")).toEqual({ state: "absent" });
         });
 
+        it("reads every other original when one stored blob is missing", async () => {
+            fs.writeFileSync(at("added.bal"), "// placeholder\n");
+            const svc = service();
+            const cp = (await svc.capture("msg-1"))!;
+            const files = cp.storage?.kind === "content-store" ? cp.storage.files : {};
+            const mainHash = (files["main.bal"] as { hash: string }).hash;
+            fs.rmSync(path.join(storeDir, mainHash.slice(0, 2), mainHash));
+            cp.fileList = cp.fileList.filter(p => p !== "added.bal");
+            delete files["added.bal"];
+
+            const originals = await svc.readOriginals(cp, ["main.bal", "Config.toml", "added.bal"]);
+
+            expect(originals.get("main.bal")).toEqual({ state: "unavailable", reason: "unreadable" });
+            const toml = originals.get("Config.toml");
+            expect(toml?.state === "content" && toml.bytes.toString("utf8")).toBe(ORIGINAL_CONFIG);
+            expect(originals.get("added.bal")).toEqual({ state: "absent" });
+        });
+
         it("sweeps only blobs no live checkpoint references", async () => {
             const svc = service();
             const live = (await svc.capture("msg-1"))!;
