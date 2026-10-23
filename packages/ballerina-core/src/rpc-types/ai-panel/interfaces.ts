@@ -257,6 +257,20 @@ export interface Attachment {
     mimeType?: string;
 }
 
+/** `native`: text as text, images as data URLs, PDFs as raw base64. `base64`: everything as raw base64. */
+export type AttachmentEncoding = 'native' | 'base64';
+
+export interface SelectAttachmentFilesRequest {
+    canSelectMany: boolean;
+    maxFileSize: number;
+    maxTotalSize: number;
+    /** Extension (lower-case, no dot) → MIME type. */
+    fileTypes: Record<string, string>;
+    /** Also accept any other UTF-8 text file, as text/plain. */
+    acceptOtherText: boolean;
+    encoding: AttachmentEncoding;
+}
+
 export enum AttachmentStatus {
     Success = "Success",
     FileSizeExceeded = "FileSizeExceeded",
