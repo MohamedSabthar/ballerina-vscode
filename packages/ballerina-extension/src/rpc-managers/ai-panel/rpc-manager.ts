@@ -85,6 +85,8 @@ import {
     SetCopilotToggleSettingRequest,
     McpLoadErrorsDTO,
     AgentsMdFileInfoDTO,
+    Attachment,
+    SelectAttachmentFilesRequest,
     ThreadSummary,
     SwitchThreadRequest,
     DeleteThreadRequest,
@@ -106,6 +108,7 @@ import * as os from "os";
 import * as fs from 'fs';
 import path from "path";
 import * as vscode from 'vscode';
+import { selectAttachmentFiles as selectAttachmentFilesImpl } from "./attachment-picker";
 import { window, workspace } from 'vscode';
 import { loginRequiredWarning, signInToCopilot } from '../../features/ai/constants';
 // TODO(auto-memory): temporarily disabled for this release.
@@ -1655,6 +1658,11 @@ User reverted the last made changes. The files have been restored to the state b
 
     async openOrCreateAgentsMd(): Promise<void> {
         await openOrCreateAgentsMdImpl();
+    }
+
+    async selectAttachmentFiles(params: SelectAttachmentFilesRequest): Promise<Attachment[]> {
+        const context = StateMachine.context();
+        return selectAttachmentFilesImpl(params, context?.projectPath || context?.workspacePath);
     }
 
     private async refreshAndNotify(): Promise<void> {
