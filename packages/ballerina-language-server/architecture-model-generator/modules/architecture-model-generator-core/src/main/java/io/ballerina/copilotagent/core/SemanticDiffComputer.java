@@ -61,6 +61,7 @@ import io.ballerina.tools.text.LineRange;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -785,17 +786,18 @@ public class SemanticDiffComputer {
         foundServices.forEach(originalServiceMap::remove);
 
         // Split keys by # and check if there is a match between first parts
-        Map<String, String> originalServiceBasePaths = extractServiceBasePaths(originalServiceMap);
-        Map<String, String> modifiedServiceBasePaths = extractServiceBasePaths(modifiedServiceMap);
+        Map<String, List<String>> originalServicesByBasePath = groupServicesByBasePath(originalServiceMap);
+        Map<String, List<String>> modifiedServicesByBasePath = groupServicesByBasePath(modifiedServiceMap);
 
         // Check for matches and handle differences
         // Services matching by base path but not by full key means the listener
-        // expression changed (e.g., inline listener port change), which is a design diagram concern
-        for (Map.Entry<String, String> entry : originalServiceBasePaths.entrySet()) {
-            String basePath = entry.getKey();
-            if (modifiedServiceBasePaths.containsKey(basePath)) {
-                String originalServiceName = entry.getValue();
-                String modifiedServiceName = modifiedServiceBasePaths.get(basePath);
+        // expression or the annotations changed (e.g., inline listener port change)
+        for (Map.Entry<String, List<String>> entry : originalServicesByBasePath.entrySet()) {
+            List<String> originalServiceNames = entry.getValue();
+            List<String> modifiedServiceNames = modifiedServicesByBasePath.getOrDefault(entry.getKey(), List.of());
+            for (int i = 0; i < Math.min(originalServiceNames.size(), modifiedServiceNames.size()); i++) {
+                String originalServiceName = originalServiceNames.get(i);
+                String modifiedServiceName = modifiedServiceNames.get(i);
                 foundServices.add(originalServiceName);
                 foundServices.add(modifiedServiceName);
                 ServiceDeclarationNode originalService = originalServiceMap.get(originalServiceName);
@@ -993,23 +995,23 @@ public class SemanticDiffComputer {
     }
 
     /**
-     * Extracts base paths from service names in the given service map.
+     * Groups service names by their base path, each group in source order so that services sharing a
+     * base path (e.g. message consumers on one listener) pair up one-to-one in declaration order.
      *
      * @param serviceMap map of service names to their declaration nodes
      * @return a map of service base paths to full service names
      */
-    private Map<String, String> extractServiceBasePaths(Map<String, ServiceDeclarationNode> serviceMap) {
+    private static Map<String, List<String>> groupServicesByBasePath(Map<String, ServiceDeclarationNode> serviceMap) {
 
-        Map<String, String> serviceBasePaths = new HashMap<>();
-        for (Map.Entry<String, ServiceDeclarationNode> entry : serviceMap.entrySet()) {
-            String serviceName = entry.getKey();
-            String basePath = serviceName.split("#")[0];
-            // Two services may legally share a base path (different listeners). Keep the
-            // first instead of silently overwriting — the unmatched one then surfaces via
-            // the removed/added handling rather than being paired with the wrong service.
-            serviceBasePaths.putIfAbsent(basePath, serviceName);
-        }
-        return serviceBasePaths;
+        Map<String, List<String>> servicesByBasePath = new HashMap<>();
+        serviceMap.entrySet().stream()
+                .sorted(Comparator.comparing((Map.Entry<String, ServiceDeclarationNode> entry) ->
+                                entry.getValue().lineRange().fileName())
+                        .thenComparingInt(entry -> entry.getValue().lineRange().startLine().line()))
+                .forEach(entry -> servicesByBasePath
+                        .computeIfAbsent(entry.getKey().split("#")[0], basePath -> new ArrayList<>())
+                        .add(entry.getKey()));
+        return servicesByBasePath;
     }
 
     /**
