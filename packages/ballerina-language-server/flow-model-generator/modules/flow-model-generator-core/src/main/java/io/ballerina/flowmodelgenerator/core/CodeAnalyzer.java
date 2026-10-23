@@ -1199,6 +1199,12 @@ public class CodeAnalyzer extends NodeVisitor {
         return null;
     }
 
+    // `check` and `checkpanic` both read as Check Error on: neither hands the error to the binding. The
+    // node's checkpanic flag tells the builders which keyword to write back, so a re-save keeps it.
+    private static boolean isCheckedAgentCall(Node callNode) {
+        return callNode.parent() instanceof CheckExpressionNode;
+    }
+
     // The expression a call argument carries, whichever way it was written.
     private static ExpressionNode argumentExpression(FunctionArgumentNode argument) {
         if (argument instanceof PositionalArgumentNode positional) {
@@ -1241,9 +1247,7 @@ public class CodeAnalyzer extends NodeVisitor {
         addAgentCallProperty(DurableAgentStartBuilder.INPUT_KEY, "Input",
                 "The structured input the run was given", agentArgumentSource(runArguments, 1, AGENT_RUN_INPUT_PARAM));
 
-        SyntaxKind parentKind = callNode.parent().kind();
-        boolean hasCheck = parentKind == SyntaxKind.CHECK_ACTION || parentKind == SyntaxKind.CHECK_EXPRESSION;
-        nodeBuilder.properties().checkError(hasCheck);
+        nodeBuilder.properties().checkError(isCheckedAgentCall(callNode));
     }
 
     /**
@@ -1429,9 +1433,7 @@ public class CodeAnalyzer extends NodeVisitor {
         // three, and saving would have written those blanks back.
         populateDurableAgentCallArguments(callNode, nodeKind, waits, dataEventName);
 
-        SyntaxKind parentKind = callNode.parent().kind();
-        boolean hasCheck = parentKind == SyntaxKind.CHECK_ACTION || parentKind == SyntaxKind.CHECK_EXPRESSION;
-        nodeBuilder.properties().checkError(hasCheck);
+        nodeBuilder.properties().checkError(isCheckedAgentCall(callNode));
     }
 
     /**
