@@ -252,6 +252,16 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(true);
     const oauthPropertiesRef = useRef<{ key: string; property: Property }[]>([]);
+    // The approval function the tool referenced when the form opened. If the save drops it (Remove, or
+    // Requires Approval turned off), it is deleted once no tool uses it.
+    const previousApprovalFunctionRef = useRef<string | undefined>(undefined);
+    const deleteDetachedApprovalFunction = async (data: FormValues) => {
+        const previous = previousApprovalFunctionRef.current;
+        if (previous && buildApprovalToolData(data).requiresApproval !== previous) {
+            await approvalActions.deleteIfUnused(previous);
+        }
+    };
+
     const isEdit = Boolean(editContext);
     const isClassEdit = Boolean(editContext?.inClass);
 
@@ -420,6 +430,7 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
 
                     oauthPropertiesRef.current = oauthProperties;
                     const existingApproval = parseRequiresApproval(annotationValue);
+                    previousApprovalFunctionRef.current = existingApproval?.functionName;
                     const existingConfig = parseAuth(annotationValue, oauthProperties.map(({ key }) => key));
                     const { oauthFields, oauthRecordFields } = buildOAuthFields(oauthProperties, existingConfig);
                     const requiresApprovalField = buildApprovalField(existingApproval, editContext.functionName);
@@ -445,6 +456,7 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
                     oauthPropertiesRef.current = oauthProperties;
                     const annotationValue = findAgentToolAnnotation(model)?.value ?? "";
                     const existingApproval = parseRequiresApproval(annotationValue);
+                    previousApprovalFunctionRef.current = existingApproval?.functionName;
                     const existingConfig = parseAuth(annotationValue, oauthProperties.map(({ key }) => key));
                     const { oauthFields, oauthRecordFields } = buildOAuthFields(oauthProperties, existingConfig);
                     const requiresApprovalField = buildApprovalField(existingApproval, String(model.name.value));
@@ -578,6 +590,7 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
             } as any);
             await rpcClient.getAIAgentRpcClient().fixMissingImports();
             await approvalActions.verifyGenerated(buildApprovalToolData(data));
+            await deleteDetachedApprovalFunction(data);
             await onSave(String(updatedModel.name.value));
         } catch {
             await rpcClient.getCommonRpcClient().showErrorMessage({ message: "Failed to update the agent tool." });
@@ -687,6 +700,7 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
             }
             await rpcClient.getAIAgentRpcClient().fixMissingImports();
             await approvalActions.verifyGenerated(buildApprovalToolData(data));
+            await deleteDetachedApprovalFunction(data);
             await onSave(String(properties.functionName.value));
         } catch {
             await rpcClient.getCommonRpcClient().showErrorMessage({

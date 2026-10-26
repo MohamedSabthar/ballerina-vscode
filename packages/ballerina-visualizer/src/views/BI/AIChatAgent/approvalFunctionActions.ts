@@ -21,6 +21,16 @@ import { BallerinaRpcClient } from "@wso2/ballerina-rpc-client";
 import { ApprovalFunctionParam } from "@wso2/ballerina-side-panel";
 import { findFunctionByName } from "../FlowDiagram/utils";
 
+// The function a `requiresApproval: <fn>` annotation field names, or undefined for `true`/`false`, a
+// qualified `mod:fn` reference, or no field at all.
+export function parseApprovalFunctionName(annotation: string): string | undefined {
+    const raw = /\brequiresApproval\b\s*:\s*([^,}\s]+)/.exec(annotation)?.[1]?.trim();
+    if (!raw || raw === "true" || raw === "false" || raw.includes(":")) {
+        return undefined;
+    }
+    return raw;
+}
+
 export interface ApprovalFunctionInfo {
     params: ApprovalFunctionParam[];
     // Agent tools whose @ai:AgentTool annotation names this function, as reported by the language server.
@@ -55,36 +65,87 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
         }
     };
 
+    const readFunction = async (name: string, fileName: string, projectPath?: string) => {
+        const location = projectPath ? { projectPath } : await rpcClient.getVisualizerLocation();
+        const response = await rpcClient.getBIDiagramRpcClient().getFunctionNode({
+            functionName: name,
+            fileName,
+            projectPath: location.projectPath,
+        });
+        return response?.functionDefinition;
+    };
+
+    const getFunctionInfo = async (name: string): Promise<ApprovalFunctionInfo | null> => {
+        const found = await locate(name);
+        if (!found) {
+            return null;
+        }
+        try {
+            const node = await readFunction(name, found.filePath);
+            if (!node) {
+                return null;
+            }
+            const usedBy = node.codedata?.data?.approvalFunctionFor;
+            return {
+                params: readFunctionNodeParameters(node.properties?.parameters?.value),
+                usedBy: Array.isArray(usedBy) ? usedBy.map(String) : [],
+            };
+        } catch (error) {
+            console.error(">>> Error reading approval function", error);
+            return null;
+        }
+    };
+
+    // Deletes an approval function once no agent tool uses it. Call it after the change that dropped the
+    // reference has been saved, so the language server's list of users is current. Returns whether it deleted.
+    const deleteIfUnused = async (name: string): Promise<boolean> => {
+        const info = await getFunctionInfo(name);
+        if (!info || info.usedBy.length > 0) {
+            return false;
+        }
+        const found = await locate(name);
+        if (!found) {
+            return false;
+        }
+        try {
+            await rpcClient.getBIDiagramRpcClient().deleteByComponentInfo({
+                filePath: found.filePath,
+                component: {
+                    name,
+                    filePath: found.filePath,
+                    startLine: found.startLine,
+                    startColumn: found.startColumn,
+                    endLine: found.endLine,
+                    endColumn: found.endColumn,
+                    resources: [],
+                },
+            });
+            return true;
+        } catch (error) {
+            console.error(">>> Error deleting approval function", error);
+            return false;
+        }
+    };
+
     return {
+        deleteIfUnused,
+        // The approval function named in a tool's @ai:AgentTool annotation, read before the tool is deleted.
+        approvalFunctionOfTool: async (
+            toolName: string, fileName: string, projectPath?: string
+        ): Promise<string | undefined> => {
+            try {
+                const node = await readFunction(toolName, fileName, projectPath);
+                const annotations = node?.properties?.annotations?.value;
+                return typeof annotations === "string" ? parseApprovalFunctionName(annotations) : undefined;
+            } catch (error) {
+                console.error(">>> Error reading tool annotation", error);
+                return undefined;
+            }
+        },
         isNameTaken: async (name: string): Promise<boolean> => Boolean(await locate(name)),
         // The approval function's current parameters and the agent tools that use it, so the tool form can
         // warn about a mismatch before saving. Null when the function can't be read.
-        getFunctionInfo: async (name: string): Promise<ApprovalFunctionInfo | null> => {
-            const found = await locate(name);
-            if (!found) {
-                return null;
-            }
-            try {
-                const { projectPath } = await rpcClient.getVisualizerLocation();
-                const response = await rpcClient.getBIDiagramRpcClient().getFunctionNode({
-                    functionName: name,
-                    fileName: found.filePath,
-                    projectPath,
-                });
-                const node = response?.functionDefinition;
-                if (!node) {
-                    return null;
-                }
-                const usedBy = node.codedata?.data?.approvalFunctionFor;
-                return {
-                    params: readFunctionNodeParameters(node.properties?.parameters?.value),
-                    usedBy: Array.isArray(usedBy) ? usedBy.map(String) : [],
-                };
-            } catch (error) {
-                console.error(">>> Error reading approval function", error);
-                return null;
-            }
-        },
+        getFunctionInfo,
         // After a save that asked the language server to generate an approval function, confirm the
         // function exists. A language server that predates this feature ignores the request, which
         // otherwise only surfaces later as an Open that can't find the function.
