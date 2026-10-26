@@ -162,6 +162,17 @@ describe("resolveICPPath precedence", () => {
         expect(settingUpdates).toEqual([]);
     });
 
+    it("uses the workspace path when both the workspace and user paths exist", async () => {
+        settingScope = "workspace";
+        settingValue = makeIcpBin(root, "workspace-icp");
+        userLevelValue = makeIcpBin(root, "user-icp");
+
+        await expect(resolveICPPath()).resolves.toBe(settingValue);
+        expect(prompts).toEqual([]);
+        expect(settingUpdates).toEqual([]);
+        expect(log).not.toHaveBeenCalled();
+    });
+
     it("uses WSO2_INTEGRATOR_ICP_HOME/bin/<script> without writing it to settings", async () => {
         const envScript = useIcpHome("env-home");
 
@@ -180,7 +191,6 @@ describe("resolveICPPath precedence", () => {
         expect(prompts).toEqual([]);
         expect(settingUpdates).toEqual([]);
     });
-
 
     it("logs and skips a WSO2_INTEGRATOR_ICP_HOME that has no bin/<script>", async () => {
         const emptyHome = path.join(root, "empty-home");
@@ -338,6 +348,7 @@ describe("resolveICPPath with a configured path that is missing", () => {
         await expect(resolveICPPath()).resolves.toBe(userLevelValue);
         expect(prompts).toEqual([]);
         expect(settingUpdates).toEqual([]);
+        expect(log).toHaveBeenCalledWith(expect.stringContaining(`${settingValue} was not found; using ${userLevelValue}`));
     });
 
     it.each([

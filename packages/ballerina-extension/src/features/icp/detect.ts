@@ -195,6 +195,9 @@ export async function resolveICPPath(): Promise<string | undefined> {
     //    applies when a workspace value points at a file missing on this machine.
     const existingPath = scopes.find(scope => existsSync(scope.value))?.value;
     if (existingPath) {
+        if (existingPath !== scopes[0].value) {
+            log(`${ICP_PATH} ${scopes[0].value} was not found; using ${existingPath} from another scope.`);
+        }
         return existingPath;
     }
 
