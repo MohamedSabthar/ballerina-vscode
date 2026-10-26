@@ -589,8 +589,10 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
                 artifactType: DIRECTORY_MAP.TYPE,
             } as any);
             await rpcClient.getAIAgentRpcClient().fixMissingImports();
-            await approvalActions.verifyGenerated(buildApprovalToolData(data));
-            await deleteDetachedApprovalFunction(data);
+            // Clean up the previous function only once the new reference is known to resolve.
+            if (await approvalActions.verifyGenerated(buildApprovalToolData(data))) {
+                await deleteDetachedApprovalFunction(data);
+            }
             await onSave(String(updatedModel.name.value));
         } catch {
             await rpcClient.getCommonRpcClient().showErrorMessage({ message: "Failed to update the agent tool." });
@@ -699,8 +701,10 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
                 throw new Error("Agent tool source generation returned no artifacts");
             }
             await rpcClient.getAIAgentRpcClient().fixMissingImports();
-            await approvalActions.verifyGenerated(buildApprovalToolData(data));
-            await deleteDetachedApprovalFunction(data);
+            // Clean up the previous function only once the new reference is known to resolve.
+            if (await approvalActions.verifyGenerated(buildApprovalToolData(data))) {
+                await deleteDetachedApprovalFunction(data);
+            }
             await onSave(String(properties.functionName.value));
         } catch {
             await rpcClient.getCommonRpcClient().showErrorMessage({

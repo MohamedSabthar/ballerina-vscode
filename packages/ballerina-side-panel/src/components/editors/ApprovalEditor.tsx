@@ -16,7 +16,8 @@
  * under the License.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useFormState } from "react-hook-form";
 import { createPortal } from "react-dom";
 import styled from "@emotion/styled";
 import { Button, CheckBoxGroup, Codicon, FormCheckBox, LinkButton, TextField, ThemeColors } from "@wso2/ui-toolkit";
@@ -160,8 +161,9 @@ const Chip = styled.span`
     padding: 0 8px;
     font-size: 12px;
     border-radius: 4px;
-    background: rgba(128, 128, 128, 0.15);
-    border: 1px solid rgba(128, 128, 128, 0.4);
+    background: ${ThemeColors.SURFACE_CONTAINER};
+    border: 1px solid ${ThemeColors.OUTLINE_VARIANT};
+    color: ${ThemeColors.ON_SURFACE};
 `;
 
 const ButtonRow = styled.div`
@@ -311,16 +313,14 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
     const isNew = isChecked(values[config.generateKey]);
     const params = useMemo(() => config.getToolParameters(values), [values, config]);
 
-    // Snapshot of the tool's parameters when the form opened, to tell the user that saving will
-    // also update an existing approval function whose signature no longer matches.
-    const initialSignature = useRef<string | undefined>(undefined);
-    useEffect(() => {
-        if (initialSignature.current === undefined) {
-            initialSignature.current = paramsSignature(params);
-        }
-    }, [params]);
-    const paramsChanged = initialSignature.current !== undefined
-        && initialSignature.current !== paramsSignature(params);
+    // The tool's parameters as the form loaded them, to tell the user that saving will also update an
+    // existing approval function whose signature no longer matches. Form loads its values with reset()
+    // after this editor mounts, so compare against the form's default values rather than a snapshot.
+    const { defaultValues } = useFormState({ control });
+    const paramsChanged = useMemo(
+        () => paramsSignature(config.getToolParameters(defaultValues ?? {})) !== paramsSignature(params),
+        [defaultValues, params, config]
+    );
 
     // The attached function as it is in source, to catch one that was edited out of step with the tool.
     const [info, setInfo] = useState<{ name: string; params: ApprovalFunctionParam[]; usedBy: string[] } | null>(null);

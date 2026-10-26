@@ -119,6 +119,8 @@ describe("approvalFunctionActions.verifyGenerated", () => {
         expect(showErrorMessage).toHaveBeenCalledTimes(1);
         expect(showErrorMessage.mock.calls[0][0].message).toContain("'addToCartApproval'");
         expect(showErrorMessage.mock.calls[0][0].message).toContain("language server may be out of date");
+        // The form has closed by now, so the message points the user back to the tool.
+        expect(showErrorMessage.mock.calls[0][0].message).toContain("open the tool and save it again");
     });
 });
 

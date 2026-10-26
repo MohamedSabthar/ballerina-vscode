@@ -157,7 +157,9 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
         getFunctionInfo,
         // After a save that asked the language server to generate an approval function, confirm the
         // function exists. A language server that predates this feature ignores the request, which
-        // otherwise only surfaces later as an Open that can't find the function.
+        // otherwise only surfaces later as an Open that can't find the function. The tool itself is
+        // saved either way, so callers close their form: saving a create form again would create the
+        // tool twice.
         verifyGenerated: async (
             approvalData: { requiresApproval?: string; generateApprovalFunction?: string },
             retryDelayMs: number = 400
@@ -175,7 +177,7 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
             }
             await rpcClient.getCommonRpcClient().showErrorMessage({
                 message: `The tool now references '${name}', but the language server didn't create it. `
-                    + "The language server may be out of date. Update it, then save the tool again.",
+                    + "The language server may be out of date. Update it, then open the tool and save it again.",
             });
             return false;
         },

@@ -141,6 +141,27 @@ describe("ApprovalEditor", () => {
         await waitFor(() => expect(screen.getByTestId("approval-function-sync-note").textContent)
             .toContain("isHighValue will be updated to match when you save"));
     });
+
+    it("doesn't report a parameter change for values the form loads after the editor mounts", async () => {
+        // Form loads its values with reset() from its own effect, after the editor has mounted.
+        const { getForm } = renderApproval(true, {
+            initialFunction: "isHighValue",
+            getToolParameters: (values) => values.params ?? [],
+        });
+        await waitFor(() => expect(screen.getByTestId("approval-function-attached")).toBeTruthy());
+        act(() => {
+            getForm().reset({ requiresApproval: true, approvalFunction: "isHighValue", params: PARAMS });
+        });
+        await act(async () => undefined);
+        expect(screen.queryByTestId("approval-function-sync-note")).toBeNull();
+
+        act(() => {
+            getForm().setValue("params", [...PARAMS, { type: "string[]", name: "cc" }]);
+        });
+        await waitFor(() => expect(screen.getByTestId("approval-function-sync-note").textContent)
+            .toContain("isHighValue will be updated to match when you save"));
+    });
+
     it("warns when the attached function was edited out of step with the tool", async () => {
         const getFunctionInfo = jest.fn().mockResolvedValue({
             params: [{ type: "string", name: "to" }], usedBy: ["sendEmailTool"],
