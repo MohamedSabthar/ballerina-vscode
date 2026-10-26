@@ -271,8 +271,13 @@ export function AddApprovalFunctionForm(props: AddApprovalFunctionFormProps) {
                 <ReadonlyRow style={{ marginTop: 4 }}><Chip>boolean</Chip></ReadonlyRow>
             </LabelGroup>
             <ButtonRow>
-                <Button appearance="secondary" onClick={onCancel}>Cancel</Button>
-                <Button appearance="primary" onClick={handleAdd} disabled={checking || Boolean(validate(name))}>
+                <Button id="approval-function-add-cancel" appearance="secondary" onClick={onCancel}>Cancel</Button>
+                <Button
+                    id="approval-function-add-confirm"
+                    appearance="primary"
+                    onClick={handleAdd}
+                    disabled={checking || Boolean(validate(name))}
+                >
                     Add
                 </Button>
             </ButtonRow>
@@ -381,7 +386,7 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
     return (
         <Form>
             <CheckBoxGroup containerSx={{ width: "100%" }}>
-                <BoxGroup>
+                <BoxGroup data-testid="approval-required">
                     <FormCheckBox
                         name={field.key}
                         {...register(field.key, { value: isChecked(field.value) })}
@@ -404,6 +409,7 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
                                 {!isNew && config.onOpenFunction && (
                                     <IconButton
                                         type="button"
+                                        data-testid="approval-function-open"
                                         aria-label={`Open ${functionName}`}
                                         title="Open in flow diagram"
                                         onClick={() => config.onOpenFunction?.(functionName)}
@@ -413,6 +419,7 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
                                 )}
                                 <IconButton
                                     type="button"
+                                    data-testid="approval-function-remove"
                                     aria-label="Remove approval function"
                                     title="Remove"
                                     onClick={remove}
@@ -433,7 +440,7 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
                             {addForm}
                         </InlineCard>
                     ) : (
-                        <LinkButton onClick={() => setAdding(true)} sx={{ marginTop: 4 }}>
+                        <LinkButton id="approval-function-add" onClick={() => setAdding(true)} sx={{ marginTop: 4 }}>
                             <Codicon name="add" />
                             Add {APPROVAL_FUNCTION_LABEL}
                         </LinkButton>
