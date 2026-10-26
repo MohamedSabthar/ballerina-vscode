@@ -91,6 +91,12 @@ public class ModuleNodeAnalyzer extends NodeVisitor {
      */
     public static final String APPROVAL_FUNCTION_FOR_KEY = "approvalFunctionFor";
 
+    /**
+     * Codedata key telling whether anything besides agent tool annotations refers to a function (a call, an
+     * {@code ai:ToolConfig}), so a client can tell whether removing the last tool leaves it unused.
+     */
+    public static final String REFERENCED_OUTSIDE_APPROVALS_KEY = "referencedOutsideApprovals";
+
     private final ModuleInfo moduleInfo;
     private final SemanticModel semanticModel;
     private final Gson gson;
@@ -187,6 +193,9 @@ public class ModuleNodeAnalyzer extends NodeVisitor {
             if (!tools.isEmpty()) {
                 nodeBuilder.codedata().data(APPROVAL_FUNCTION_FOR_KEY, tools);
             }
+            nodeBuilder.codedata().data(REFERENCED_OUTSIDE_APPROVALS_KEY,
+                    ApprovalFunctionSync.referencedOutsideApprovals(semanticModel, functionDefinitionNode,
+                            tools.size()));
         }
 
         // Set the function name, return type and nested properties

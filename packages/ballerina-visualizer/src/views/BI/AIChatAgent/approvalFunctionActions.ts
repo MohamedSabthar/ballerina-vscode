@@ -22,9 +22,9 @@ import { ApprovalFunctionParam } from "@wso2/ballerina-side-panel";
 import { findFunctionByName } from "../FlowDiagram/utils";
 
 // The function a `requiresApproval: <fn>` annotation field names, or undefined for `true`/`false`, a
-// qualified `mod:fn` reference, or no field at all.
+// qualified `mod:fn` reference, an inline function, or no field at all.
 export function parseApprovalFunctionName(annotation: string): string | undefined {
-    const raw = /\brequiresApproval\b\s*:\s*([^,}\s]+)/.exec(annotation)?.[1]?.trim();
+    const raw = /\brequiresApproval\b\s*:\s*([^,}\s]+)\s*(?:[,}]|$)/.exec(annotation)?.[1]?.trim();
     if (!raw || raw === "true" || raw === "false" || raw.includes(":")) {
         return undefined;
     }
@@ -35,6 +35,9 @@ export interface ApprovalFunctionInfo {
     params: ApprovalFunctionParam[];
     // Agent tools whose @ai:AgentTool annotation names this function, as reported by the language server.
     usedBy: string[];
+    // Whether anything besides those annotations refers to the function (a call, an ai:ToolConfig). Unknown
+    // when the language server predates the check.
+    referencedElsewhere?: boolean;
 }
 
 // A FUNCTION_DEFINITION node keeps its parameters as REPEATABLE_PROPERTY entries, each holding
@@ -86,9 +89,11 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
                 return null;
             }
             const usedBy = node.codedata?.data?.approvalFunctionFor;
+            const referencedElsewhere = node.codedata?.data?.referencedOutsideApprovals;
             return {
                 params: readFunctionNodeParameters(node.properties?.parameters?.value),
                 usedBy: Array.isArray(usedBy) ? usedBy.map(String) : [],
+                referencedElsewhere: typeof referencedElsewhere === "boolean" ? referencedElsewhere : undefined,
             };
         } catch (error) {
             console.error(">>> Error reading approval function", error);
@@ -96,11 +101,13 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
         }
     };
 
-    // Deletes an approval function once no agent tool uses it. Call it after the change that dropped the
-    // reference has been saved, so the language server's list of users is current. Returns whether it deleted.
+    // Deletes an approval function once nothing refers to it any more. Call it after the change that dropped the
+    // reference has been saved, so the language server's view is current. A language server that can't say
+    // whether the function is referenced elsewhere gets the benefit of the doubt: the function is kept.
+    // Returns whether it deleted.
     const deleteIfUnused = async (name: string): Promise<boolean> => {
         const info = await getFunctionInfo(name);
-        if (!info || info.usedBy.length > 0) {
+        if (!info || info.usedBy.length > 0 || info.referencedElsewhere !== false) {
             return false;
         }
         const found = await locate(name);
@@ -129,12 +136,14 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
 
     return {
         deleteIfUnused,
-        // The approval function named in a tool's @ai:AgentTool annotation, read before the tool is deleted.
+        // The approval function named in a tool's @ai:AgentTool annotation, read before the tool is deleted. The
+        // tool can live in any file of the package; `fileName` is only the fallback when it can't be located.
         approvalFunctionOfTool: async (
             toolName: string, fileName: string, projectPath?: string
         ): Promise<string | undefined> => {
             try {
-                const node = await readFunction(toolName, fileName, projectPath);
+                const tool = await locate(toolName);
+                const node = await readFunction(toolName, tool?.filePath ?? fileName, projectPath);
                 const annotations = node?.properties?.annotations?.value;
                 return typeof annotations === "string" ? parseApprovalFunctionName(annotations) : undefined;
             } catch (error) {

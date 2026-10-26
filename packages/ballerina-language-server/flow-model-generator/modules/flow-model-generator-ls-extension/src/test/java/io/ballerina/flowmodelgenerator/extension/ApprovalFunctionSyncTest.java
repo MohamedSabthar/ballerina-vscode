@@ -18,6 +18,7 @@
 
 package io.ballerina.flowmodelgenerator.extension;
 
+import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ModuleMemberDeclarationNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
@@ -111,6 +112,34 @@ public class ApprovalFunctionSyncTest {
     @Test
     public void testMissingApprovalFunctionIsNotGeneratedUnlessAsked() {
         Assert.assertTrue(sync("newApproval", "sendEmailTool", List.of(TO), false).isEmpty());
+    }
+
+    @Test
+    public void testApprovalReferencesAloneDoNotCountAsOtherUses() {
+        Assert.assertFalse(referencedOutsideApprovals("sendEmailApproval", 1));
+        Assert.assertFalse(referencedOutsideApprovals("sharedApproval", 2));
+    }
+
+    @Test
+    public void testOtherReferencesCount() {
+        // auditCheck calls calledApproval; no tool annotation names it.
+        Assert.assertTrue(referencedOutsideApprovals("calledApproval", 0));
+        // Once its tool is gone, the remaining annotation reference is something else using it.
+        Assert.assertTrue(referencedOutsideApprovals("sendEmailApproval", 0));
+    }
+
+    private boolean referencedOutsideApprovals(String function, int approvalUses) {
+        Optional<Document> document = workspaceManager.document(APPROVAL);
+        Optional<SemanticModel> semanticModel = workspaceManager.semanticModel(APPROVAL);
+        Assert.assertTrue(document.isPresent() && semanticModel.isPresent());
+        ModulePartNode root = document.get().syntaxTree().rootNode();
+        for (ModuleMemberDeclarationNode member : root.members()) {
+            if (member instanceof FunctionDefinitionNode node && node.functionName().text().equals(function)) {
+                return ApprovalFunctionSync.referencedOutsideApprovals(semanticModel.get(), node, approvalUses);
+            }
+        }
+        Assert.fail("No function named " + function);
+        return false;
     }
 
     private Map<Path, List<TextEdit>> sync(String approvalFunction, String tool, List<Param> params,

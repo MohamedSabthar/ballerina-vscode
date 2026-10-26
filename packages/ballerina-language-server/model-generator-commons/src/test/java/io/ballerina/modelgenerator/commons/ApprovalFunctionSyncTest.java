@@ -56,6 +56,7 @@ public class ApprovalFunctionSyncTest {
                 {"@ai:AgentTool {requiresApproval: false}", null},
                 {"@ai:AgentTool {requiresApproval: rules:isHigh}", null},
                 {"@ai:AgentTool", null},
+                {"@ai:AgentTool {requiresApproval: isolated function (string to) returns boolean => true}", null},
                 {"@display {label: \"x\"}", null},
                 {null, null},
         };

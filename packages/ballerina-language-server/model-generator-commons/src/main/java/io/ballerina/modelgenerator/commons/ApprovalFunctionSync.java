@@ -69,7 +69,7 @@ import java.util.regex.Pattern;
 public final class ApprovalFunctionSync {
 
     private static final Pattern REQUIRES_APPROVAL =
-            Pattern.compile("\\brequiresApproval\\s*:\\s*('?[A-Za-z_][A-Za-z0-9_]*)(?=\\s*[,}\\s]|$)");
+            Pattern.compile("\\brequiresApproval\\s*:\\s*('?[A-Za-z_][A-Za-z0-9_]*)(?=\\s*(?:[,}]|$))");
     private static final String AI_CONTEXT_TYPE = "ai:Context";
 
     /**
@@ -134,6 +134,30 @@ public final class ApprovalFunctionSync {
             }
         }
         return tools;
+    }
+
+    /**
+     * Whether a function is referenced anywhere other than its own definition and the given number of
+     * {@code requiresApproval} annotation fields, such as a call from business logic or an {@code ai:ToolConfig}.
+     * Such a function is never deleted along with the tools that used it.
+     *
+     * @param semanticModel the function's semantic model
+     * @param function      the function definition
+     * @param approvalUses  how many agent tool annotations name the function
+     * @return true when something else refers to the function
+     */
+    public static boolean referencedOutsideApprovals(SemanticModel semanticModel, FunctionDefinitionNode function,
+                                                     int approvalUses) {
+        Optional<Symbol> symbol = semanticModel.symbol(function);
+        if (symbol.isEmpty()) {
+            return true;
+        }
+        Optional<Location> definition = symbol.get().getLocation();
+        long references = semanticModel.references(symbol.get()).stream()
+                .filter(reference -> definition.isEmpty()
+                        || !definition.get().lineRange().equals(reference.lineRange()))
+                .count();
+        return references > approvalUses;
     }
 
     private static void addIfGated(List<String> tools, FunctionDefinitionNode function, String functionName) {

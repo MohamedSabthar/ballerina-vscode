@@ -34,16 +34,21 @@ import {
 
 function fakeRpcClient(
     functionNames: () => string[],
-    options: { usedBy?: string[]; annotations?: string } = {}
+    options: { usedBy?: string[]; annotations?: string; referencedElsewhere?: boolean | null } = {}
 ) {
     const showErrorMessage = jest.fn();
     const openView = jest.fn();
     const deleteByComponentInfo = jest.fn().mockResolvedValue({});
-    const rpcClient: any = {
-        getBIDiagramRpcClient: () => ({
-            getFunctionNode: async ({ functionName }: { functionName: string }) => ({
+    const getFunctionNode = jest.fn(async ({ functionName }: { functionName: string }) => ({
                 functionDefinition: {
-                    codedata: { data: { approvalFunctionFor: options.usedBy ?? ["addToCart"] } },
+                    codedata: {
+                        data: {
+                            approvalFunctionFor: options.usedBy ?? ["addToCart"],
+                            // null leaves the flag out, as a language server that predates it does.
+                            ...(options.referencedElsewhere === null
+                                ? {} : { referencedOutsideApprovals: options.referencedElsewhere ?? false }),
+                        },
+                    },
                     properties: {
                         annotations: { value: options.annotations ?? "" },
                         parameters: {
@@ -54,7 +59,10 @@ function fakeRpcClient(
                         },
                     },
                 },
-            }),
+            }));
+    const rpcClient: any = {
+        getBIDiagramRpcClient: () => ({
+            getFunctionNode,
             deleteByComponentInfo,
             getProjectComponents: async () => ({
                 components: {
@@ -68,7 +76,7 @@ function fakeRpcClient(
         getVisualizerRpcClient: () => ({ openView }),
         getVisualizerLocation: async () => ({ projectPath: "/p" }),
     };
-    return { rpcClient, showErrorMessage, openView, deleteByComponentInfo };
+    return { rpcClient, showErrorMessage, openView, deleteByComponentInfo, getFunctionNode };
 }
 
 describe("approvalFunctionActions.verifyGenerated", () => {
@@ -143,6 +151,7 @@ describe("approvalFunctionActions.getFunctionInfo", () => {
         expect(await createApprovalFunctionActions(rpcClient).getFunctionInfo("addToCartApproval")).toEqual({
             params: [{ type: "string[]", name: "ids" }, { type: "string", name: "addToCartApproval" }],
             usedBy: ["addToCart"],
+            referencedElsewhere: false,
         });
     });
 
@@ -167,6 +176,7 @@ describe("parseApprovalFunctionName", () => {
         ["@ai:AgentTool {requiresApproval: false}", undefined],
         ["@ai:AgentTool {requiresApproval: rules:isHigh}", undefined],
         ["@ai:AgentTool", undefined],
+        ["@ai:AgentTool {requiresApproval: isolated function (string id) returns boolean => id != \"\"}", undefined],
     ])("reads %p", (annotation, expected) => {
         expect(parseApprovalFunctionName(annotation)).toBe(expected);
     });
@@ -191,6 +201,20 @@ describe("approvalFunctionActions orphan cleanup", () => {
         expect(deleteByComponentInfo).not.toHaveBeenCalled();
     });
 
+    it("keeps an approval function something else still calls", async () => {
+        const { rpcClient, deleteByComponentInfo } = fakeRpcClient(() => ["isHighValue"],
+            { usedBy: [], referencedElsewhere: true });
+        expect(await createApprovalFunctionActions(rpcClient).deleteIfUnused("isHighValue")).toBe(false);
+        expect(deleteByComponentInfo).not.toHaveBeenCalled();
+    });
+
+    it("keeps the function when the language server can't say what else refers to it", async () => {
+        const { rpcClient, deleteByComponentInfo } = fakeRpcClient(() => ["addToCartApproval"],
+            { usedBy: [], referencedElsewhere: null });
+        expect(await createApprovalFunctionActions(rpcClient).deleteIfUnused("addToCartApproval")).toBe(false);
+        expect(deleteByComponentInfo).not.toHaveBeenCalled();
+    });
+
     it("does nothing when the function is already gone", async () => {
         const { rpcClient, deleteByComponentInfo } = fakeRpcClient(() => [], { usedBy: [] });
         expect(await createApprovalFunctionActions(rpcClient).deleteIfUnused("addToCartApproval")).toBe(false);
@@ -203,6 +227,23 @@ describe("approvalFunctionActions orphan cleanup", () => {
         });
         const actions = createApprovalFunctionActions(rpcClient);
         expect(await actions.approvalFunctionOfTool("addToCart", "agents.bal", "/p")).toBe("addToCartApproval");
+    });
+
+    it("reads the tool from the file it lives in, not the agent's file", async () => {
+        const { rpcClient, getFunctionNode } = fakeRpcClient(() => ["addToCart"], {
+            annotations: "@ai:AgentTool {requiresApproval: addToCartApproval}",
+        });
+        const actions = createApprovalFunctionActions(rpcClient);
+        expect(await actions.approvalFunctionOfTool("addToCart", "agents.bal", "/p")).toBe("addToCartApproval");
+        expect(getFunctionNode).toHaveBeenCalledWith(expect.objectContaining({ fileName: "/p/agents.bal" }));
+    });
+
+    it("falls back to the agent's file when the tool can't be located", async () => {
+        const { rpcClient, getFunctionNode } = fakeRpcClient(() => [], {
+            annotations: "@ai:AgentTool {requiresApproval: addToCartApproval}",
+        });
+        await createApprovalFunctionActions(rpcClient).approvalFunctionOfTool("addToCart", "agents.bal", "/p");
+        expect(getFunctionNode).toHaveBeenCalledWith(expect.objectContaining({ fileName: "agents.bal" }));
     });
 
     it("reads no approval function for an unconditionally gated tool", async () => {
