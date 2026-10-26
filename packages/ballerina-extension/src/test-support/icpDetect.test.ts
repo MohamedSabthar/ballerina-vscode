@@ -181,12 +181,6 @@ describe("resolveICPPath precedence", () => {
         expect(settingUpdates).toEqual([]);
     });
 
-    it("does not look for ICP under the running app's install root", async () => {
-        // ICP no longer ships inside the app; the launcher points WSO2_INTEGRATOR_ICP_HOME at it.
-        makeIcpBin(runInsideWI("wi-install"), "components", "icp");
-
-        expect(detectICPPath()).toBeUndefined();
-    });
 
     it("logs and skips a WSO2_INTEGRATOR_ICP_HOME that has no bin/<script>", async () => {
         const emptyHome = path.join(root, "empty-home");
@@ -336,27 +330,30 @@ describe("resolveICPPath with a configured path that is missing", () => {
         expect(settingUpdates).toEqual([cleared(vscode.ConfigurationTarget.Workspace)]);
     });
 
-    it("Use Default ICP clears every scope and ignores a user-level path", async () => {
-        runInsideWI("wi-install");
+    it("uses a working user-level path without prompting when the workspace value is missing", async () => {
         settingScope = "workspace";
         userLevelValue = makeIcpBin(root, "custom");
-        const envScript = useIcpHome("data-icp");
-        promptAnswer = "Use Default ICP";
+        useIcpHome("env-home");
 
-        await expect(resolveICPPath()).resolves.toBe(envScript);
-        expect(settingUpdates).toEqual([
-            cleared(vscode.ConfigurationTarget.Workspace),
-            cleared(vscode.ConfigurationTarget.Global),
-        ]);
+        await expect(resolveICPPath()).resolves.toBe(userLevelValue);
+        expect(prompts).toEqual([]);
+        expect(settingUpdates).toEqual([]);
     });
 
-    it("Auto Detect clears every scope and returns the detected path", async () => {
+    it.each([
+        ["Use Default ICP", true],
+        ["Auto Detect", false],
+    ])("%s clears the missing value in every scope and returns the detected path", async (answer, insideWI) => {
+        if (insideWI) {
+            runInsideWI("wi-install");
+        }
         settingScope = "workspace";
-        userLevelValue = makeIcpBin(root, "custom");
+        userLevelValue = path.join(root, "also-gone", "bin", scriptName());
         const envScript = useIcpHome("env-home");
-        promptAnswer = "Auto Detect";
+        promptAnswer = answer;
 
         await expect(resolveICPPath()).resolves.toBe(envScript);
+        expect(prompts).toHaveLength(1);
         expect(settingUpdates).toEqual([
             cleared(vscode.ConfigurationTarget.Workspace),
             cleared(vscode.ConfigurationTarget.Global),
@@ -391,7 +388,7 @@ describe("resolveICPPath with a configured path that is missing", () => {
 describe("detectICPPath scans the well-known install directories", () => {
     // The base directories are computed when the module loads, so load a fresh copy
     // with the platform and its base-dir env vars pointing into the temp root.
-    function loadDetectForWindows(): typeof import("../features/icp/detect") {
+    function loadDetectForWindows(appRoot = ""): typeof import("../features/icp/detect") {
         const saved = { APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, PROGRAMFILES: process.env.PROGRAMFILES };
         setPlatform("win32");
         process.env.APPDATA = path.join(root, "appdata");
@@ -399,6 +396,8 @@ describe("detectICPPath scans the well-known install directories", () => {
         process.env.PROGRAMFILES = path.join(root, "programfiles");
         let mod: typeof import("../features/icp/detect");
         jest.isolateModules(() => {
+            // The isolated copy of the module sees its own vscode mock.
+            require("vscode").env.appRoot = appRoot;
             mod = require("../features/icp/detect");
         });
         for (const [key, value] of Object.entries(saved)) {
@@ -416,6 +415,37 @@ describe("detectICPPath scans the well-known install directories", () => {
         const script = makeIcpBin(root, "localappdata", "WSO2", "Integrator", ...segments);
 
         expect(detect.detectICPPath()).toBe(script);
+    });
+
+    describe("with WSO2 Integrator installed in a scanned base directory", () => {
+        const installSegments = ["localappdata", "WSO2", "Integrator"];
+        const appRootOf = () => path.join(root, ...installSegments, "resources", "app");
+
+        // Load first: it switches the platform to win32, which decides the script name.
+        it("skips the ICP inside the running WSO2 Integrator app", () => {
+            process.env[WI_RUNTIME_ENV] = "true";
+            const detect = loadDetectForWindows(appRootOf());
+            const inApp = makeIcpBin(root, ...installSegments, "components", "icp");
+
+            expect(inApp.endsWith("icp.bat")).toBe(true);
+            expect(detect.detectICPPath()).toBeUndefined();
+        });
+
+        it("still finds another install's ICP while running inside WSO2 Integrator", () => {
+            process.env[WI_RUNTIME_ENV] = "true";
+            const detect = loadDetectForWindows(appRootOf());
+            makeIcpBin(root, ...installSegments, "components", "icp");
+            const other = makeIcpBin(root, "programfiles", "WSO2", "Integrator", "wso2-integrator-1.2.0", "components", "icp");
+
+            expect(detect.detectICPPath()).toBe(other);
+        });
+
+        it("finds that install's ICP from plain VS Code", () => {
+            const detect = loadDetectForWindows(appRootOf());
+            const script = makeIcpBin(root, ...installSegments, "components", "icp");
+
+            expect(detect.detectICPPath()).toBe(script);
+        });
     });
 
     it("returns nothing when the base directories hold no install", () => {
