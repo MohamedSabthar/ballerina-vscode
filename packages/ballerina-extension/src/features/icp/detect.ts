@@ -171,8 +171,8 @@ function scanDefaultInstallDirs(): string | undefined {
 
 /**
  * Resolves the ICP executable path.
- * 1. Drops a `ballerina.icpPath` value inside the running WSO2 Integrator app (one-time cleanup,
- *    see `dropICPPathsInsideWIApp`).
+ * 1. Drops a user-level `ballerina.icpPath` value inside the running WSO2 Integrator app
+ *    (one-time cleanup, see `dropICPPathsInsideWIApp`).
  * 2. Uses the first remaining `ballerina.icpPath` value that exists on disk, checking the
  *    workspace value before the user value.
  * 3. If every configured value points at a missing file, tells the user and offers to fall back
@@ -223,6 +223,7 @@ export async function resolveICPPath(): Promise<string | undefined> {
         // Every configured value is missing at this point, so clearing them all removes no working
         // path, and none of them brings the prompt back on the next start.
         for (const scope of scopes) {
+            log(`Clearing missing ${ICP_PATH} ${scope.value}.`);
             await clearICPPathSetting(config, scope.target);
         }
     }
@@ -259,8 +260,13 @@ function getConfiguredICPPaths(config: WorkspaceConfiguration): ConfiguredICPPat
 /**
  * One-time cleanup: earlier versions wrote the auto-detected ICP path into `ballerina.icpPath`.
  * Inside WSO2 Integrator that path is inside the app, which the update tool replaces, so the
- * cached value goes stale and shadows the ICP the launcher now points at. Drop such values in
- * every scope so detection takes over. Paths outside the app are the user's choice and are kept.
+ * cached value goes stale and shadows the ICP the launcher now points at. Drop such a value so
+ * detection takes over.
+ *
+ * Only the user-level value is touched, because earlier versions only ever wrote that scope. A
+ * workspace value inside the app was set by a person, and clearing it would rewrite a settings
+ * file that is often committed and shared, so it follows the normal rules instead: used if it
+ * exists, otherwise reported as missing. Paths outside the app are the user's choice and are kept.
  *
  * TODO: Remove once releases that cached the path are no longer in use.
  *
@@ -269,7 +275,7 @@ function getConfiguredICPPaths(config: WorkspaceConfiguration): ConfiguredICPPat
 async function dropICPPathsInsideWIApp(config: WorkspaceConfiguration): Promise<ConfiguredICPPath[]> {
     const remaining: ConfiguredICPPath[] = [];
     for (const scope of getConfiguredICPPaths(config)) {
-        if (isInsideWIApp(scope.value)) {
+        if (scope.target === ConfigurationTarget.Global && isInsideWIApp(scope.value)) {
             await clearICPPathSetting(config, scope.target);
         } else {
             remaining.push(scope);

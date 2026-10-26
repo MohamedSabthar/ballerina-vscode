@@ -181,7 +181,6 @@ describe("resolveICPPath precedence", () => {
         expect(settingUpdates).toEqual([]);
     });
 
-
     it("follows WSO2_INTEGRATOR_ICP_HOME to a new install while the old one is still on disk", async () => {
         const first = useIcpHome("icp-1.0");
         await expect(resolveICPPath()).resolves.toBe(first);
@@ -234,28 +233,40 @@ describe("one-time cleanup of a setting inside the running WSO2 Integrator app",
         expect(prompts[0].message).toContain("not installed");
     });
 
-    it("clears cached paths in both workspace and user settings", async () => {
+    // Earlier versions only ever cached the path in user settings, so a workspace value inside
+    // the app was set by a person and is left to the normal rules.
+    it("clears only the user value when both scopes point inside the app", async () => {
+        const installRoot = runInsideWI("wi-install");
+        settingScope = "workspace";
+        settingValue = makeIcpBin(installRoot, "components", "icp");
+        userLevelValue = settingValue;
+        useIcpHome("env-home");
+
+        await expect(resolveICPPath()).resolves.toBe(settingValue);
+        expect(settingUpdates).toEqual([cleared(vscode.ConfigurationTarget.Global)]);
+    });
+
+    it("reports a missing workspace value inside the app instead of clearing it", async () => {
         const installRoot = runInsideWI("wi-install");
         settingScope = "workspace";
         settingValue = path.join(installRoot, "components", "icp", "bin", scriptName());
-        userLevelValue = makeIcpBin(installRoot, "components", "icp");
-        const envScript = useIcpHome("env-home");
+        useIcpHome("env-home");
 
-        await expect(resolveICPPath()).resolves.toBe(envScript);
-        expect(settingUpdates).toEqual([
-            cleared(vscode.ConfigurationTarget.Workspace),
-            cleared(vscode.ConfigurationTarget.Global),
-        ]);
+        await expect(resolveICPPath()).resolves.toBeUndefined();
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0].message).toContain(settingValue);
+        expect(settingUpdates).toEqual([]);
     });
 
-    it("clears a cached workspace value and falls back to a custom user-level one", async () => {
+    it("keeps a missing workspace value inside the app and uses a working user-level path", async () => {
         const installRoot = runInsideWI("wi-install");
         settingScope = "workspace";
         settingValue = path.join(installRoot, "components", "icp", "bin", scriptName());
         userLevelValue = makeIcpBin(root, "custom");
 
         await expect(resolveICPPath()).resolves.toBe(userLevelValue);
-        expect(settingUpdates).toEqual([cleared(vscode.ConfigurationTarget.Workspace)]);
+        expect(settingUpdates).toEqual([]);
+        expect(prompts).toEqual([]);
     });
 
     it("keeps a path in another WSO2 Integrator install outside the running app", async () => {
@@ -369,6 +380,9 @@ describe("resolveICPPath with a configured path that is missing", () => {
             cleared(vscode.ConfigurationTarget.Workspace),
             cleared(vscode.ConfigurationTarget.Global),
         ]);
+        // The prompt names only the workspace path, so each cleared value is logged.
+        expect(log).toHaveBeenCalledWith(`Clearing missing ballerina.icpPath ${settingValue}.`);
+        expect(log).toHaveBeenCalledWith(`Clearing missing ballerina.icpPath ${userLevelValue}.`);
     });
 
     it("with nothing installed falls through to the not-installed prompt", async () => {
