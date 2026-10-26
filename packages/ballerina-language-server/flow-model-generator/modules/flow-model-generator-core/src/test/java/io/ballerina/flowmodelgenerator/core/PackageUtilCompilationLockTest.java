@@ -31,7 +31,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -65,6 +68,52 @@ public class PackageUtilCompilationLockTest {
 
             Assert.assertNotNull(compilation.get(WAIT_MILLIS, TimeUnit.MILLISECONDS));
         } finally {
+            ProjectLocks.removeOwner(owner);
+        }
+    }
+
+    @Test(description = "The owner's lock is taken before the path lock, so the owner can compile while another "
+            + "caller waits")
+    public void testOwnerCompilesWhileAnotherCallerWaits() throws Exception {
+        Project project = SingleFileProject.load(singleFile());
+        ReentrantLock ownerLock = new ReentrantLock(true);
+        ProjectLocks.Owner owner = candidate -> candidate == project ? Optional.of(ownerLock) : Optional.empty();
+        ProjectLocks.addOwner(owner);
+        // Daemon threads: if the order is ever inverted, both stay blocked and must not keep the JVM alive.
+        ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
+            Thread thread = new Thread(runnable);
+            thread.setDaemon(true);
+            return thread;
+        });
+        try {
+            CompletableFuture<CompletableFuture<PackageCompilation>> queued = new CompletableFuture<>();
+            CompletableFuture<PackageCompilation> ownerCompilation = CompletableFuture.supplyAsync(() -> {
+                ownerLock.lock();
+                try {
+                    queued.complete(CompletableFuture.supplyAsync(() -> PackageUtil.getCompilation(project),
+                            executor));
+                    awaitQueued(ownerLock);
+                    // The other caller waits on the owner's lock. Had it taken the path lock first, it would hold
+                    // that lock while waiting, and this compilation under the owner's lock could never get it.
+                    return PackageUtil.getCompilation(project);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                } finally {
+                    ownerLock.unlock();
+                }
+            }, executor);
+
+            try {
+                Assert.assertNotNull(ownerCompilation.get(WAIT_MILLIS, TimeUnit.MILLISECONDS));
+            } catch (TimeoutException e) {
+                Assert.fail("The owner could not compile while another caller waited for the project's lock; "
+                        + "is the path lock taken before the owner's?");
+            }
+            Assert.assertNotNull(queued.get(WAIT_MILLIS, TimeUnit.MILLISECONDS)
+                    .get(WAIT_MILLIS, TimeUnit.MILLISECONDS));
+        } finally {
+            executor.shutdownNow();
             ProjectLocks.removeOwner(owner);
         }
     }
