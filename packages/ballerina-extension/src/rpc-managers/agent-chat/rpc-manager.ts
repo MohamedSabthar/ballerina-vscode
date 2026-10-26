@@ -30,6 +30,7 @@ import {
     ClearChatResponse,
     SessionInput,
     SessionInfoResponse,
+    SetChatEndpointRequest,
     AvailableAgentsResponse,
     SwitchAgentRequest,
     SwitchAgentResponse,
@@ -46,7 +47,7 @@ import { TracerMachine, TraceServer } from "../../features/tracing";
 import { TraceDetailsWebview } from "../../features/tracing/trace-details-webview";
 import { Trace } from "../../features/tracing/trace-server";
 import { v4 as uuidv4 } from "uuid";
-import { updateChatSessionId } from "../../features/tryit/activator";
+import { overrideChatEndpoint, updateChatSessionId } from "../../features/tryit/activator";
 
 export class AgentChatRpcManager implements AgentChatAPI {
     // Shared by getChatMessage and submitDecision. Safe only because the UI serializes them -
@@ -342,7 +343,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
                     case 408:
                         throw new Error("Request Timeout: The server took too long to respond.");
                     case 500:
-                        throw new Error("Internal Server Error: Something went wrong on the server.");
+                        throw new Error(errorData?.message || "Internal Server Error: Something went wrong on the server.");
                     case 502:
                         throw new Error("Bad Gateway: Received an invalid response from the upstream server.");
                     case 503:
@@ -669,6 +670,22 @@ export class AgentChatRpcManager implements AgentChatAPI {
             sessionId: extension.agentChatContext?.chatSessionId || '',
             chatEndpoint: extension.agentChatContext?.chatEp || '',
         };
+    }
+
+    async setChatEndpoint(params: SetChatEndpointRequest): Promise<SessionInfoResponse> {
+        const ctx = extension.agentChatContext;
+        if (!ctx) {
+            throw new Error('No active agent chat session');
+        }
+        const chatEp = new URL(params.chatEndpoint).href;
+        const activeAgent = ctx.agents?.find(a => a.name === ctx.activeAgentName);
+        if (activeAgent) {
+            activeAgent.chatEp = chatEp;
+            overrideChatEndpoint(activeAgent.endpointKey, chatEp);
+        }
+        ctx.chatEp = chatEp;
+        updateChatSessionId(chatEp, ctx.chatSessionId);
+        return this.getSessionInfo();
     }
 
     async getAvailableChatAgents(): Promise<AvailableAgentsResponse> {

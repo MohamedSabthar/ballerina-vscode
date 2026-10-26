@@ -888,7 +888,7 @@ public class CodeAnalyzer extends NodeVisitor {
                         if (valueExprOpt.isEmpty()) {
                             continue;
                         }
-                        String fieldName = specificField.fieldName().toString().trim();
+                        String fieldName = fieldNameText(specificField);
                         ExpressionNode valueExpr = valueExprOpt.get();
                         switch (fieldName) {
                             case FIELD_TOOLS -> toolsArg = valueExpr;
@@ -1045,7 +1045,7 @@ public class CodeAnalyzer extends NodeVisitor {
                 value = valueExpr.toString().trim();
                 selectedType = Property.ValueType.EXPRESSION;
             }
-            agentData.put(specificFieldNode.fieldName().toString().trim(),
+            agentData.put(fieldNameText(specificFieldNode),
                     new AiUtils.AgentPropertyValue(value, selectedType));
         }
     }
@@ -1199,6 +1199,12 @@ public class CodeAnalyzer extends NodeVisitor {
         return null;
     }
 
+    // `check` and `checkpanic` both read as Check Error on: neither hands the error to the binding. The
+    // node's checkpanic flag tells the builders which keyword to write back, so a re-save keeps it.
+    private static boolean isCheckedAgentCall(Node callNode) {
+        return callNode.parent() instanceof CheckExpressionNode;
+    }
+
     // The expression a call argument carries, whichever way it was written.
     private static ExpressionNode argumentExpression(FunctionArgumentNode argument) {
         if (argument instanceof PositionalArgumentNode positional) {
@@ -1241,9 +1247,7 @@ public class CodeAnalyzer extends NodeVisitor {
         addAgentCallProperty(DurableAgentStartBuilder.INPUT_KEY, "Input",
                 "The structured input the run was given", agentArgumentSource(runArguments, 1, AGENT_RUN_INPUT_PARAM));
 
-        SyntaxKind parentKind = callNode.parent().kind();
-        boolean hasCheck = parentKind == SyntaxKind.CHECK_ACTION || parentKind == SyntaxKind.CHECK_EXPRESSION;
-        nodeBuilder.properties().checkError(hasCheck);
+        nodeBuilder.properties().checkError(isCheckedAgentCall(callNode));
     }
 
     /**
@@ -1429,9 +1433,7 @@ public class CodeAnalyzer extends NodeVisitor {
         // three, and saving would have written those blanks back.
         populateDurableAgentCallArguments(callNode, nodeKind, waits, dataEventName);
 
-        SyntaxKind parentKind = callNode.parent().kind();
-        boolean hasCheck = parentKind == SyntaxKind.CHECK_ACTION || parentKind == SyntaxKind.CHECK_EXPRESSION;
-        nodeBuilder.properties().checkError(hasCheck);
+        nodeBuilder.properties().checkError(isCheckedAgentCall(callNode));
     }
 
     /**
@@ -3545,6 +3547,27 @@ public class CodeAnalyzer extends NodeVisitor {
         }
     }
 
+    // The agent editor edits each config field as its own property, so read `new ({...})` like named args.
+    private static void spreadAgentConfigArg(Queue<Node> positionalArgs, Map<String, Node> namedArgValueMap) {
+        if (positionalArgs.size() != 1 || !(positionalArgs.peek() instanceof MappingConstructorExpressionNode config)) {
+            return;
+        }
+        Map<String, Node> fields = new LinkedHashMap<>();
+        for (MappingFieldNode field : config.fields()) {
+            if (!(field instanceof SpecificFieldNode specificField) || specificField.valueExpr().isEmpty()
+                    || !(specificField.fieldName() instanceof Token)) {
+                return;
+            }
+            fields.put(fieldNameText(specificField), specificField.valueExpr().get());
+        }
+        positionalArgs.clear();
+        namedArgValueMap.putAll(fields);
+    }
+
+    private static String fieldNameText(SpecificFieldNode field) {
+        return field.fieldName() instanceof Token token ? token.text() : field.fieldName().toSourceCode().strip();
+    }
+
     private void buildPropsFromFuncCallArgs(SeparatedNodeList<FunctionArgumentNode> argumentNodes,
                                             FunctionTypeSymbol functionTypeSymbol,
                                             Map<String, ParameterData> funcParamMap,
@@ -5023,6 +5046,9 @@ public class CodeAnalyzer extends NodeVisitor {
         final Map<String, Node> namedArgValueMap = new HashMap<>();
         final Queue<Node> positionalArgs = new LinkedList<>();
         calculateFunctionArgs(namedArgValueMap, positionalArgs, arguments);
+        if (nodeBuilder instanceof AgentBuilder) {
+            spreadAgentConfigArg(positionalArgs, namedArgValueMap);
+        }
 
         Map<String, ParameterData> funcParamMap = new LinkedHashMap<>();
         Map<String, ParameterData> typeInferParamMap = new LinkedHashMap<>();

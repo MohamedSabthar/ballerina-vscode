@@ -69,7 +69,7 @@ import { NewToolSelectionMode } from "./NewTool";
 import { buildOAuthFields, fetchOAuthConfigProperties, ZERO_LINE_RANGE } from "./utils";
 import { assertFunctionSearchSuccess, FUNCTIONS_PAGE_SIZE } from "../../../utils/function-pagination";
 import { useFunctionPaginationController } from "../../../utils/useFunctionPaginationController";
-import { countSectionLeafNodes, mergePanelCategories } from "../FlowDiagram/utils";
+import { countSectionLeafNodes, findFunctionByName, mergePanelCategories } from "../FlowDiagram/utils";
 import { updateResourcePathProperty } from "./agentTools";
 import { AddConnectionPopupContent } from "../Connection/AddConnectionPopup/AddConnectionPopupContent";
 import { ConnectionConfigurationForm } from "../Connection/ConnectionConfigurationPopup";
@@ -836,11 +836,22 @@ export function AIAgentSidePanel(props: BIFlowDiagramProps) {
             advanced: false,
         }));
 
+    // getFunctionNode only searches the file it is given, and a project function can live in any file.
+    const resolveFunctionFilePath = async (node: AvailableNode): Promise<string> => {
+        if (node.codedata?.data?.moduleRelation !== "CURRENT_MODULE") {
+            return functionFilePath.current;
+        }
+        const project = await rpcClient.getBIDiagramRpcClient().getProjectComponents();
+        const found = project?.components ? findFunctionByName(project.components, node.codedata.symbol) : null;
+        return found?.filePath || functionFilePath.current;
+    };
+
     const loadFunctionCallFields = async (node: AvailableNode, options?: { suggestedToolName?: string }): Promise<void> => {
         try {
+            const filePath = await resolveFunctionFilePath(node);
             const functionNodeResponse = await rpcClient.getBIDiagramRpcClient().getFunctionNode({
                 functionName: node.codedata.symbol,
-                fileName: functionFilePath.current,
+                fileName: filePath,
                 projectPath: projectPath,
             });
 
@@ -856,7 +867,7 @@ export function AIAgentSidePanel(props: BIFlowDiagramProps) {
 
             const functionNodeTemplate = await rpcClient.getBIDiagramRpcClient().getNodeTemplate({
                 position: funcDef?.codedata.lineRange.startLine || { line: 0, offset: 0 },
-                filePath: functionFilePath.current,
+                filePath,
                 id: node.codedata,
             });
 
@@ -876,7 +887,11 @@ export function AIAgentSidePanel(props: BIFlowDiagramProps) {
                 toolInputFields = createToolInputFields(prepareToolInputFields(functionParameterFields));
                 functionNode.current = functionNodeTemplate.flowNode as FunctionNode;
             } else if (functionNodeTemplate.flowNode?.properties) {
-                functionParameterFields = convertConfig(functionNodeTemplate.flowNode.properties, ["variable"], false);
+                // Result Type comes from the call template, which moves `error` out of the type into checkError.
+                if (functionNodeTemplate.flowNode.properties.type) {
+                    funcDef.properties.checkError = functionNodeTemplate.flowNode.properties.checkError;
+                }
+                functionParameterFields = convertConfig(functionNodeTemplate.flowNode.properties, ["variable", "checkError"], false);
                 functionParameterFields.forEach((field, idx) => {
                     if (getPrimaryInputType(field.types)?.fieldType === "TYPE") {
                         functionParameterFields[idx].documentation = "The data type this tool will return to the agent.";
@@ -893,7 +908,7 @@ export function AIAgentSidePanel(props: BIFlowDiagramProps) {
             const templateDescription = stripCodeFences(functionNodeTemplate.flowNode?.metadata?.description || "");
 
             const position = funcDef?.codedata.lineRange.startLine || { line: 0, offset: 0 };
-            const oauthProperties = await fetchOAuthConfigProperties(rpcClient, functionFilePath.current, position);
+            const oauthProperties = await fetchOAuthConfigProperties(rpcClient, filePath, position);
             oauthConfigPropertiesRef.current = oauthProperties;
             const oauthFields = buildOAuthFields(oauthProperties);
             setShowOAuthConfig(oauthFields.length > 0);
