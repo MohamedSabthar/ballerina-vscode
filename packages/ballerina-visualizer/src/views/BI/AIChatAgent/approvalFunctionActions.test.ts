@@ -41,7 +41,7 @@ function fakeRpcClient(
     const deleteByComponentInfo = jest.fn().mockResolvedValue({});
     const getFunctionNode = jest.fn(async ({ functionName }: { functionName: string }) => ({
                 functionDefinition: {
-                    codedata: {
+                    metadata: {
                         data: {
                             approvalFunctionFor: options.usedBy ?? ["addToCart"],
                             // null leaves the flag out, as a language server that predates it does.

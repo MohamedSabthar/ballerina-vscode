@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { EVENT_TYPE, MACHINE_VIEW } from "@wso2/ballerina-core";
+import { EVENT_TYPE, MACHINE_VIEW, NodeMetadata } from "@wso2/ballerina-core";
 import { BallerinaRpcClient } from "@wso2/ballerina-rpc-client";
 import { ApprovalFunctionParam } from "@wso2/ballerina-side-panel";
 import { findFunctionByName } from "../FlowDiagram/utils";
@@ -88,8 +88,9 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
             if (!node) {
                 return null;
             }
-            const usedBy = node.codedata?.data?.approvalFunctionFor;
-            const referencedElsewhere = node.codedata?.data?.referencedOutsideApprovals;
+            const metadata = node.metadata?.data as NodeMetadata | undefined;
+            const usedBy = metadata?.approvalFunctionFor;
+            const referencedElsewhere = metadata?.referencedOutsideApprovals;
             return {
                 params: readFunctionNodeParameters(node.properties?.parameters?.value),
                 usedBy: Array.isArray(usedBy) ? usedBy.map(String) : [],

@@ -123,6 +123,10 @@ export type NodeMetadata = {
     agentInfo?: AgentNodeInfo;
     // The workflow context method a palette node stands for, e.g. "awaitHumanTask"; shown in its tooltip
     method?: string;
+    // The agent tools that use this function as their requiresApproval function
+    approvalFunctionFor?: string[];
+    // Whether anything besides agent tool annotations refers to this function; absent from an older language server
+    referencedOutsideApprovals?: boolean;
 };
 
 export type ParentMetadata = {

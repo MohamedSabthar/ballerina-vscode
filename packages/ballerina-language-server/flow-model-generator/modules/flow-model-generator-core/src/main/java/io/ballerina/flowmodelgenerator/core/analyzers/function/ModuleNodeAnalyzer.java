@@ -87,12 +87,12 @@ import static io.ballerina.modelgenerator.commons.ParameterData.Kind.REQUIRED;
 public class ModuleNodeAnalyzer extends NodeVisitor {
 
     /**
-     * Codedata key listing the agent tools that use a function as their {@code requiresApproval} function.
+     * Metadata key listing the agent tools that use a function as their {@code requiresApproval} function.
      */
     public static final String APPROVAL_FUNCTION_FOR_KEY = "approvalFunctionFor";
 
     /**
-     * Codedata key telling whether anything besides agent tool annotations refers to a function (a call, an
+     * Metadata key telling whether anything besides agent tool annotations refers to a function (a call, an
      * {@code ai:ToolConfig}), so a client can tell whether removing the last tool leaves it unused.
      */
     public static final String REFERENCED_OUTSIDE_APPROVALS_KEY = "referencedOutsideApprovals";
@@ -191,9 +191,9 @@ public class ModuleNodeAnalyzer extends NodeVisitor {
             List<String> tools = ApprovalFunctionSync.toolsUsing(moduleRoots,
                     functionDefinitionNode.functionName().text().trim());
             if (!tools.isEmpty()) {
-                nodeBuilder.codedata().data(APPROVAL_FUNCTION_FOR_KEY, tools);
+                nodeBuilder.metadata().data(APPROVAL_FUNCTION_FOR_KEY, tools);
             }
-            nodeBuilder.codedata().data(REFERENCED_OUTSIDE_APPROVALS_KEY,
+            nodeBuilder.metadata().data(REFERENCED_OUTSIDE_APPROVALS_KEY,
                     ApprovalFunctionSync.referencedOutsideApprovals(semanticModel, functionDefinitionNode,
                             tools.size()));
         }
