@@ -32,6 +32,7 @@ import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.SyntaxTree;
 import io.ballerina.mcp.core.generator.OpenApiSpecParser;
 import io.ballerina.mcp.core.model.SpecInfo;
+import io.ballerina.modelgenerator.commons.ApprovalFunctionSync;
 import io.ballerina.modelgenerator.commons.CommonUtils;
 import io.ballerina.modelgenerator.commons.ModuleInfo;
 import io.ballerina.modelgenerator.commons.ModulePrefixContext;
@@ -59,6 +60,7 @@ import io.ballerina.servicemodelgenerator.extension.model.Function;
 import io.ballerina.servicemodelgenerator.extension.model.Listener;
 import io.ballerina.servicemodelgenerator.extension.model.McpToolEndpoint;
 import io.ballerina.servicemodelgenerator.extension.model.Option;
+import io.ballerina.servicemodelgenerator.extension.model.Parameter;
 import io.ballerina.servicemodelgenerator.extension.model.Service;
 import io.ballerina.servicemodelgenerator.extension.model.ServiceClass;
 import io.ballerina.servicemodelgenerator.extension.model.ServiceInitModel;
@@ -860,11 +862,41 @@ public class ServiceModelGeneratorService implements ExtendedLanguageServerServi
                 Map<String, List<TextEdit>> textEdits = FunctionBuilderRouter.updateFunction(moduleName, function,
                         request.filePath(), document.get(), functionDefinitionNode, semanticModelOp.get(), project,
                         this.workspaceManager);
+                addApprovalFunctionEdits(textEdits, function, filePath, functionDefinitionNode);
                 return new CommonSourceResponse(textEdits, validations);
             } catch (Throwable e) {
                 return new CommonSourceResponse(e);
             }
         });
+    }
+
+    // An agent tool method gated by `@ai:AgentTool {requiresApproval: <fn>}` keeps <fn>'s parameters in step with
+    // its own, and gets <fn> generated when it doesn't exist yet. See ApprovalFunctionSync.
+    private void addApprovalFunctionEdits(Map<String, List<TextEdit>> textEdits, Function function, Path filePath,
+                                          FunctionDefinitionNode functionNode) {
+        for (Value property : function.getProperties().values()) {
+            Codedata codedata = property.getCodedata();
+            if (codedata == null || !"AgentTool".equals(codedata.getOriginalName()) || property.getValue() == null) {
+                continue;
+            }
+            Optional<String> approvalFunction =
+                    ApprovalFunctionSync.approvalFunctionName("@ai:AgentTool " + property.getValue());
+            if (approvalFunction.isEmpty()) {
+                return;
+            }
+            List<ApprovalFunctionSync.Param> params = new ArrayList<>();
+            for (Parameter parameter : function.getParameters()) {
+                if (parameter.isEnabled() && parameter.getType() != null && parameter.getName() != null) {
+                    params.add(new ApprovalFunctionSync.Param(parameter.getType().getValue().trim(),
+                            parameter.getName().getValue().trim()));
+                }
+            }
+            ApprovalFunctionSync.sync(this.workspaceManager, filePath, approvalFunction.get(), params,
+                            functionNode.lineRange(), true)
+                    .forEach((path, edits) -> textEdits.computeIfAbsent(path.toString(), ignored -> new ArrayList<>())
+                            .addAll(edits));
+            return;
+        }
     }
 
     /**

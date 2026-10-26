@@ -250,6 +250,25 @@ export function FunctionForm(props: FunctionFormProps) {
             }
         }
 
+        // An agent tool's approval function must take exactly the tool's parameters and return boolean,
+        // and the language server keeps it in step when the tool is saved. Lock both so they can't drift.
+        const approvalFor = functionNode?.codedata?.data?.approvalFunctionFor;
+        if (Array.isArray(approvalFor) && approvalFor.length > 0) {
+            const tools = approvalFor.join(", ");
+            fields.forEach((field) => {
+                if (field.key === "parameters") {
+                    field.readonlyParameters = true;
+                    field.addNewButton = false;
+                    field.documentation = `Approval function for ${tools}. Its parameters follow the tool; `
+                        + "change them on the tool instead.";
+                }
+                if (field.key === "type") {
+                    field.editable = false;
+                    field.documentation = "Approval functions always return boolean.";
+                }
+            });
+        }
+
         setFunctionFields(fields);
     }, [functionNode]);
 

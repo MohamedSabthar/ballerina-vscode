@@ -184,6 +184,7 @@ export type FormFieldInputType = "TEXT" |
     "BOOLEAN" |
     "IDENTIFIER" |
     "AUTOCOMPLETE" |
+    "AGENT_TOOL_APPROVAL" |
     "SINGLE_SELECT" |
     "MULTIPLE_SELECT" |
     "TEXTAREA" |

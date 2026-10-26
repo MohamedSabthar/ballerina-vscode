@@ -59,13 +59,18 @@ import io.ballerina.flowmodelgenerator.core.model.node.NPFunctionDefinitionBuild
 import io.ballerina.flowmodelgenerator.core.model.node.WorkflowBuilder;
 import io.ballerina.flowmodelgenerator.core.utils.TypeUtils;
 import io.ballerina.flowmodelgenerator.core.utils.WorkflowUtil;
+import io.ballerina.modelgenerator.commons.ApprovalFunctionSync;
 import io.ballerina.modelgenerator.commons.CommonUtils;
 import io.ballerina.modelgenerator.commons.ModuleInfo;
 import io.ballerina.modelgenerator.commons.ParameterData;
+import io.ballerina.projects.DocumentId;
+import io.ballerina.projects.Module;
 import io.ballerina.tools.text.LineRange;
 import org.ballerinalang.langserver.commons.BallerinaCompilerApi;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.StringJoiner;
@@ -81,15 +86,39 @@ import static io.ballerina.modelgenerator.commons.ParameterData.Kind.REQUIRED;
  */
 public class ModuleNodeAnalyzer extends NodeVisitor {
 
+    /**
+     * Codedata key listing the agent tools that use a function as their {@code requiresApproval} function.
+     */
+    public static final String APPROVAL_FUNCTION_FOR_KEY = "approvalFunctionFor";
+
     private final ModuleInfo moduleInfo;
     private final SemanticModel semanticModel;
     private final Gson gson;
+    private final List<ModulePartNode> moduleRoots;
     private JsonElement node;
 
     public ModuleNodeAnalyzer(ModuleInfo moduleInfo, SemanticModel semanticModel) {
+        this(moduleInfo, semanticModel, null);
+    }
+
+    /**
+     * Creates an analyzer that can also tell which agent tools use a function as their approval function, by
+     * reading the annotations across the module's documents.
+     *
+     * @param moduleInfo    module info
+     * @param semanticModel semantic model
+     * @param module        the function's module; {@code null} skips the approval-function lookup
+     */
+    public ModuleNodeAnalyzer(ModuleInfo moduleInfo, SemanticModel semanticModel, Module module) {
         this.moduleInfo = moduleInfo;
         this.semanticModel = semanticModel;
         this.gson = new Gson();
+        this.moduleRoots = new ArrayList<>();
+        if (module != null) {
+            for (DocumentId documentId : module.documentIds()) {
+                this.moduleRoots.add(module.document(documentId).syntaxTree().rootNode());
+            }
+        }
     }
 
     public Optional<JsonElement> findFunction(ModulePartNode rootNode, String functionName) {
@@ -148,6 +177,16 @@ public class ModuleNodeAnalyzer extends NodeVisitor {
                     functionLineRange.fileName(),
                     functionLineRange.startLine(),
                     functionDefinitionNode.functionBody().lineRange().startLine()));
+        }
+
+        // Tell the function form when this function is an agent tool's approval function, so it can keep its
+        // signature in step with the tool.
+        if (nodeKind == NodeKind.FUNCTION_DEFINITION && !moduleRoots.isEmpty()) {
+            List<String> tools = ApprovalFunctionSync.toolsUsing(moduleRoots,
+                    functionDefinitionNode.functionName().text().trim());
+            if (!tools.isEmpty()) {
+                nodeBuilder.codedata().data(APPROVAL_FUNCTION_FOR_KEY, tools);
+            }
         }
 
         // Set the function name, return type and nested properties
