@@ -48,6 +48,9 @@ import { Trace } from "../../features/tracing/trace-server";
 import { v4 as uuidv4 } from "uuid";
 import { overrideChatEndpoint, updateChatSessionId } from "../../features/tryit/activator";
 
+// Longer than the otel batch exporter's default 5s schedule delay.
+const TRACE_ARRIVAL_TIMEOUT_MS = 6000;
+
 export class AgentChatRpcManager implements AgentChatAPI {
     // Shared by getChatMessage and submitDecision. Safe only because the UI serializes them -
     // input stays disabled while an approval is pending, so the two never overlap. If that
@@ -101,7 +104,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
                     resolve({ message: '', pendingApproval } as ChatRespMessage);
                 } else if (response && response.message) {
                     // Find trace and extract tool calls and execution steps
-                    const trace = this.findTraceForMessage(extension.agentChatContext.chatSessionId, params.message, response.message);
+                    const trace = await this.waitForTraceForMessage(extension.agentChatContext.chatSessionId, params.message, response.message);
                     const executionSteps = trace ? this.extractExecutionSteps(trace) : undefined;
 
                     // Store agent response in history
@@ -133,7 +136,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
                 let executionSteps: ExecutionStep[] | undefined;
 
                 if (sessionId) {
-                    const trace = this.findTraceForMessage(extension.agentChatContext.chatSessionId, params.message);
+                    const trace = await this.waitForTraceForMessage(extension.agentChatContext.chatSessionId, params.message);
                     traceId = trace?.traceId;
                     executionSteps = trace ? this.extractExecutionSteps(trace) : undefined;
 
@@ -235,7 +238,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
                 } else if (response && response.message) {
                     this.resolvePendingApprovalInHistory(sessionId, params.decisions);
 
-                    const trace = this.findTraceForMessage(sessionId, '', response.message);
+                    const trace = await this.waitForTraceForMessage(sessionId, '', response.message);
                     const executionSteps = trace ? this.extractExecutionSteps(trace) : undefined;
 
                     this.addMessageToHistory(sessionId, {
@@ -440,6 +443,37 @@ export class AgentChatRpcManager implements AgentChatAPI {
         }
 
         return undefined;
+    }
+
+    /**
+     * Find the trace for a chat message, waiting for it to arrive if needed.
+     * The bundled otel exporter batches spans, so they can reach the trace server a few
+     * seconds after the agent has replied; a lookup at reply time alone would miss them.
+     * @param sessionId The chat session ID
+     * @param userMessage The user's input message
+     * @param agentResponse The agent's response message
+     * @returns The matching trace, or undefined if none arrives in time
+     */
+    private async waitForTraceForMessage(sessionId: string, userMessage: string, agentResponse?: string): Promise<Trace | undefined> {
+        const trace = this.findTraceForMessage(sessionId, userMessage, agentResponse);
+        if (trace || !TracerMachine.isEnabled() || !TraceServer.isRunning()) {
+            return trace;
+        }
+        return new Promise((resolve) => {
+            let unsubscribe = () => {};
+            const timeout = setTimeout(() => {
+                unsubscribe();
+                resolve(undefined);
+            }, TRACE_ARRIVAL_TIMEOUT_MS);
+            unsubscribe = TraceServer.onTracesUpdated(() => {
+                const arrived = this.findTraceForMessage(sessionId, userMessage, agentResponse);
+                if (arrived) {
+                    clearTimeout(timeout);
+                    unsubscribe();
+                    resolve(arrived);
+                }
+            });
+        });
     }
 
     /**
