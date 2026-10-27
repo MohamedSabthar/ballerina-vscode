@@ -47,6 +47,7 @@ import { isTracingEnabled } from "../../features/tracing/utils";
 import { Trace } from "../../features/tracing/trace-server";
 import { v4 as uuidv4 } from "uuid";
 import { overrideChatEndpoint, updateChatSessionId } from "../../features/tryit/activator";
+import { StateMachine } from "../../stateMachine";
 
 // Longer than the otel batch exporter's default 5s schedule delay.
 const TRACE_ARRIVAL_TIMEOUT_MS = 6000;
@@ -63,6 +64,8 @@ export class AgentChatRpcManager implements AgentChatAPI {
 
     async getChatMessage(params: ChatReqMessage): Promise<ChatRespMessage> {
         return new Promise(async (resolve, reject) => {
+            let controller: AbortController | undefined;
+            let requestSentAt: Date | undefined;
             try {
                 if (
                     !extension.agentChatContext.chatEp || typeof extension.agentChatContext.chatEp !== 'string' ||
@@ -82,14 +85,16 @@ export class AgentChatRpcManager implements AgentChatAPI {
                     isUser: true
                 });
 
-                this.currentAbortController = new AbortController();
+                controller = new AbortController();
+                this.currentAbortController = controller;
 
                 const payload = { sessionId: extension.agentChatContext.chatSessionId, ...params };
 
+                requestSentAt = new Date();
                 const response = await this.fetchTestData(
                     extension.agentChatContext.chatEp,
                     payload,
-                    this.currentAbortController.signal
+                    controller.signal
                 );
                 if (response && response.pendingApproval) {
                     const pendingApproval: PendingApprovalInfo = response.pendingApproval;
@@ -104,7 +109,9 @@ export class AgentChatRpcManager implements AgentChatAPI {
                     resolve({ message: '', pendingApproval } as ChatRespMessage);
                 } else if (response && response.message) {
                     // Find trace and extract tool calls and execution steps
-                    const trace = await this.waitForTraceForMessage(extension.agentChatContext.chatSessionId, params.message, response.message);
+                    const trace = await this.waitForTraceForMessage(
+                        extension.agentChatContext.chatSessionId, params.message, response.message, requestSentAt, controller.signal
+                    );
                     const executionSteps = trace ? this.extractExecutionSteps(trace) : undefined;
 
                     // Store agent response in history
@@ -136,7 +143,9 @@ export class AgentChatRpcManager implements AgentChatAPI {
                 let executionSteps: ExecutionStep[] | undefined;
 
                 if (sessionId) {
-                    const trace = await this.waitForTraceForMessage(extension.agentChatContext.chatSessionId, params.message);
+                    const trace = requestSentAt
+                        ? this.findTraceForMessage(extension.agentChatContext.chatSessionId, params.message, undefined, requestSentAt)
+                        : undefined;
                     traceId = trace?.traceId;
                     executionSteps = trace ? this.extractExecutionSteps(trace) : undefined;
 
@@ -158,7 +167,10 @@ export class AgentChatRpcManager implements AgentChatAPI {
 
                 reject(errorWithTrace);
             } finally {
-                this.currentAbortController = null;
+                // Clear only our own controller: after a Stop, a newer request may own the field.
+                if (this.currentAbortController === controller) {
+                    this.currentAbortController = null;
+                }
             }
         });
     }
@@ -205,6 +217,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
 
     async submitDecision(params: SubmitDecisionRequest): Promise<ChatRespMessage> {
         return new Promise(async (resolve, reject) => {
+            let controller: AbortController | undefined;
             try {
                 if (
                     !extension.agentChatContext.chatEp || typeof extension.agentChatContext.chatEp !== 'string' ||
@@ -217,8 +230,10 @@ export class AgentChatRpcManager implements AgentChatAPI {
                 const decisionEp = this.toDecisionEndpoint(extension.agentChatContext.chatEp);
                 const payload: DecisionMessage = { sessionId, decisions: params.decisions };
 
-                this.currentAbortController = new AbortController();
-                const response = await this.fetchTestData(decisionEp, payload, this.currentAbortController.signal);
+                controller = new AbortController();
+                this.currentAbortController = controller;
+                const requestSentAt = new Date();
+                const response = await this.fetchTestData(decisionEp, payload, controller.signal);
 
                 if (response && response.pendingApproval) {
                     // The run resumed only to pause again (e.g. a further gated call surfaced
@@ -238,7 +253,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
                 } else if (response && response.message) {
                     this.resolvePendingApprovalInHistory(sessionId, params.decisions);
 
-                    const trace = await this.waitForTraceForMessage(sessionId, '', response.message);
+                    const trace = await this.waitForTraceForMessage(sessionId, '', response.message, requestSentAt, controller.signal);
                     const executionSteps = trace ? this.extractExecutionSteps(trace) : undefined;
 
                     this.addMessageToHistory(sessionId, {
@@ -284,7 +299,10 @@ export class AgentChatRpcManager implements AgentChatAPI {
 
                 reject(errorWithTrace);
             } finally {
-                this.currentAbortController = null;
+                // Clear only our own controller: after a Stop, a newer request may own the field.
+                if (this.currentAbortController === controller) {
+                    this.currentAbortController = null;
+                }
             }
         });
     }
@@ -384,10 +402,14 @@ export class AgentChatRpcManager implements AgentChatAPI {
      * Find the trace that corresponds to a chat message by matching span attributes
      * @param sessionId The chat session ID
      * @param userMessage The user's input message
+     * @param agentResponse The agent's response message
+     * @param sentAt When the request was sent; traces first received earlier are skipped
      * @returns The matching trace or undefined if not found
      */
-    findTraceForMessage(sessionId: string, userMessage: string, agentResponse?: string): Trace | undefined {
-        const traces = TraceServer.getTraces();
+    findTraceForMessage(sessionId: string, userMessage: string, agentResponse?: string, sentAt?: Date): Trace | undefined {
+        // A trace first received before the request was sent belongs to an earlier turn,
+        // even when its messages match (e.g. a repeated "yes").
+        const traces = TraceServer.getTraces().filter(trace => !sentAt || trace.firstSeen >= sentAt);
 
         // Sort traces from most recent to least recent based on lastSeen timestamp
         traces.sort((a, b) => b.lastSeen.getTime() - a.lastSeen.getTime());
@@ -452,28 +474,44 @@ export class AgentChatRpcManager implements AgentChatAPI {
      * @param sessionId The chat session ID
      * @param userMessage The user's input message
      * @param agentResponse The agent's response message
+     * @param sentAt When the request was sent; earlier traces belong to earlier turns
+     * @param signal Stops the wait when the user stops the request
      * @returns The matching trace, or undefined if none arrives in time
      */
-    private async waitForTraceForMessage(sessionId: string, userMessage: string, agentResponse?: string): Promise<Trace | undefined> {
-        const trace = this.findTraceForMessage(sessionId, userMessage, agentResponse);
-        if (trace || !TracerMachine.isEnabled() || !TraceServer.isRunning()) {
+    private async waitForTraceForMessage(
+        sessionId: string, userMessage: string, agentResponse: string, sentAt: Date, signal: AbortSignal
+    ): Promise<Trace | undefined> {
+        const trace = this.findTraceForMessage(sessionId, userMessage, agentResponse, sentAt);
+        if (trace || signal.aborted || !this.isProjectTraced()) {
             return trace;
         }
         return new Promise((resolve) => {
             let unsubscribe = () => {};
-            const timeout = setTimeout(() => {
+            const finish = (result: Trace | undefined) => {
+                clearTimeout(timeout);
                 unsubscribe();
-                resolve(undefined);
-            }, TRACE_ARRIVAL_TIMEOUT_MS);
+                signal.removeEventListener('abort', onAbort);
+                resolve(result);
+            };
+            const onAbort = () => finish(undefined);
+            const timeout = setTimeout(() => finish(undefined), TRACE_ARRIVAL_TIMEOUT_MS);
+            signal.addEventListener('abort', onAbort);
             unsubscribe = TraceServer.onTracesUpdated(() => {
-                const arrived = this.findTraceForMessage(sessionId, userMessage, agentResponse);
+                const arrived = this.findTraceForMessage(sessionId, userMessage, agentResponse, sentAt);
                 if (arrived) {
-                    clearTimeout(timeout);
-                    unsubscribe();
-                    resolve(arrived);
+                    finish(arrived);
                 }
             });
         });
+    }
+
+    // Traces can only arrive when the trace server is up and the open project exports to it.
+    private isProjectTraced(): boolean {
+        if (!TraceServer.isRunning()) {
+            return false;
+        }
+        const projectPath = StateMachine.context().projectPath;
+        return projectPath ? isTracingEnabled(projectPath) : TracerMachine.isEnabled();
     }
 
     /**
