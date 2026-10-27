@@ -20,17 +20,61 @@ import * as path from 'path';
 import { parse, stringify } from '@iarna/toml';
 import { OTLP_PORT } from './constants';
 
+// Tracing provider bundled with the Ballerina runtime from 2201.14.0 onwards; no import is needed.
+const TRACING_PROVIDER = 'otel';
+
+// Keys the extension writes to [ballerina.otel] so traces reach the local trace server.
+const OTEL_TRACE_CONFIG = {
+    tracesProtocol: 'http/protobuf',
+    tracesEndpoint: `http://localhost:${OTLP_PORT}/v1/traces`
+};
+
+// Previous setup: trace_enabled.bal imports ballerinax/idetraceprovider. Projects that already
+// use it keep it until tracing is disabled.
+const LEGACY_TRACE_FILE = 'trace_enabled.bal';
+const LEGACY_TRACING_PROVIDER = 'idetraceprovider';
+const LEGACY_PROVIDER_SECTION = 'ballerinax.idetraceprovider';
+
+/**
+ * Checks whether tracing is enabled for the given project.
+ * Tracing is enabled when Config.toml has [ballerina.observe] tracingEnabled = true with the otel provider,
+ * or when the project uses the legacy trace_enabled.bal setup.
+ *
+ * @param projectPath The project directory containing Config.toml
+ * @returns true if tracing is enabled for the project
+ */
+export function isTracingEnabled(projectPath: string): boolean {
+    if (fs.existsSync(path.join(projectPath, LEGACY_TRACE_FILE))) {
+        return true;
+    }
+    const configFilePath = path.join(projectPath, 'Config.toml');
+    if (!fs.existsSync(configFilePath)) {
+        return false;
+    }
+    try {
+        const parsedConfig: any = parse(fs.readFileSync(configFilePath, 'utf-8'));
+        const observe = parsedConfig?.ballerina?.observe;
+        return observe?.tracingEnabled === true && observe?.tracingProvider === TRACING_PROVIDER;
+    } catch (error) {
+        console.error('Failed to parse Config.toml:', error);
+        return false;
+    }
+}
+
 /**
  * Sets tracing configuration in Config.toml and Ballerina.toml files
- * 
+ *
  * This function will:
  * - Read existing Config.toml if it exists
- * - Update or add [ballerina.observe] section with tracingEnabled = true and tracingProvider = "idetraceprovider"
- * - Update or add [ballerinax.idetraceprovider] section with endpoint = "http://localhost:<port>/v1/traces"
+ * - Update or add [ballerina.observe] section with tracingEnabled = true and tracingProvider = "otel"
+ * - Update or add [ballerina.otel] section to export traces to "http://localhost:<port>/v1/traces"
+ * - Remove a stale legacy [ballerinax.idetraceprovider] section
+ * - For a project that already uses the legacy trace_enabled.bal setup, keep tracingProvider = "idetraceprovider"
+ *   and leave [ballerina.otel] untouched instead
  * - Read existing Ballerina.toml if it exists
  * - Update or add [build-options] section with observabilityIncluded = true
  * - Preserve all other existing configuration
- * 
+ *
  * @param workspaceDir The workspace directory where Config.toml and Ballerina.toml should be created/updated
  * @returns Promise<void> Resolves when configuration is successfully written
  * @throws Error if file operations fail
@@ -38,38 +82,42 @@ import { OTLP_PORT } from './constants';
 export async function setTracingConfig(workspaceDir: string): Promise<void> {
     // Update Config.toml
     const configFilePath = path.join(workspaceDir, 'Config.toml');
-    
+
     // Read existing Config.toml content if it exists
-    let existingContent = '';
-    let parsedConfig: any = {};
-    
+    let updatedContent = '';
     if (fs.existsSync(configFilePath)) {
         try {
-            existingContent = fs.readFileSync(configFilePath, 'utf-8');
-            parsedConfig = parse(existingContent);
+            updatedContent = fs.readFileSync(configFilePath, 'utf-8');
         } catch (error) {
-            console.error('Failed to parse existing Config.toml:', error);
-            // Continue with empty config if parsing fails
+            console.error('Failed to read existing Config.toml:', error);
+            // Continue with empty content if reading fails
         }
     }
-    
-    // Update the parsed config object
-    if (!parsedConfig['ballerina']) {
-        parsedConfig['ballerina'] = {};
+
+    const usesLegacySetup = fs.existsSync(path.join(workspaceDir, LEGACY_TRACE_FILE));
+    if (!usesLegacySetup) {
+        updatedContent = removeSection(updatedContent, LEGACY_PROVIDER_SECTION);
     }
-    if (!parsedConfig['ballerina']['observe']) {
-        parsedConfig['ballerina']['observe'] = {};
+    updatedContent = updateOrAddSection(
+        updatedContent,
+        'ballerina.observe',
+        {
+            tracingEnabled: true,
+            tracingProvider: usesLegacySetup ? LEGACY_TRACING_PROVIDER : TRACING_PROVIDER
+        }
+    );
+    if (!usesLegacySetup) {
+        updatedContent = updateOrAddSection(updatedContent, 'ballerina.otel', OTEL_TRACE_CONFIG);
     }
-    
-    parsedConfig['ballerina']['observe']['tracingEnabled'] = true;
-    parsedConfig['ballerina']['observe']['tracingProvider'] = 'idetraceprovider';
-    
-    // Convert the updated config object back to TOML string
-    const updatedContent = convertObjectToToml(parsedConfig, existingContent);
-    
+
+    // Ensure file ends with newline
+    if (!updatedContent.endsWith('\n')) {
+        updatedContent += '\n';
+    }
+
     // Write the updated content to Config.toml
     fs.writeFileSync(configFilePath, updatedContent, 'utf-8');
-    
+
     // Update Ballerina.toml
     const ballerinaTomlPath = path.join(workspaceDir, 'Ballerina.toml');
     
@@ -103,32 +151,15 @@ export async function setTracingConfig(workspaceDir: string): Promise<void> {
 }
 
 /**
- * Converts a JavaScript object to TOML format string
- * Uses a simpler approach: updates existing sections or appends new ones
- * 
- * @param config The parsed config object
- * @param originalContent Original TOML content for reference
- * @returns TOML formatted string
+ * Deletes the trace_enabled.bal file used by the legacy idetraceprovider setup, if present
+ *
+ * @param projectPath The project directory
  */
-function convertObjectToToml(config: any, originalContent: string): string {
-    let updatedContent = originalContent || '';
-    
-    // Update or add [ballerina.observe] section
-    updatedContent = updateOrAddSection(
-        updatedContent,
-        'ballerina.observe',
-        {
-            tracingEnabled: config.ballerina?.observe?.tracingEnabled ?? true,
-            tracingProvider: config.ballerina?.observe?.tracingProvider ?? 'idetraceprovider'
-        }
-    );
-    
-    // Ensure file ends with newline
-    if (!updatedContent.endsWith('\n')) {
-        updatedContent += '\n';
+function removeLegacyTraceFile(projectPath: string): void {
+    const legacyFilePath = path.join(projectPath, LEGACY_TRACE_FILE);
+    if (fs.existsSync(legacyFilePath)) {
+        fs.unlinkSync(legacyFilePath);
     }
-    
-    return updatedContent;
 }
 
 /**
@@ -224,7 +255,9 @@ function updateOrAddSection(content: string, sectionName: string, values: Record
  * - Read existing Config.toml if it exists
  * - Remove tracingEnabled and tracingProvider from [ballerina.observe] section
  *   (removes the entire section if it becomes empty)
- * - Remove the entire [ballerinax.idetraceprovider] section
+ * - Remove the trace export keys from [ballerina.otel] section
+ *   (removes the entire section if it becomes empty)
+ * - Remove the legacy [ballerinax.idetraceprovider] section and trace_enabled.bal file
  * - Read existing Ballerina.toml if it exists
  * - Remove observabilityIncluded from [build-options] section
  *   (removes the entire section if it becomes empty)
@@ -235,9 +268,11 @@ function updateOrAddSection(content: string, sectionName: string, values: Record
  * @throws Error if file operations fail
  */
 export async function removeTracingConfig(workspaceDir: string): Promise<void> {
+    removeLegacyTraceFile(workspaceDir);
+
     // Remove from Config.toml
     const configFilePath = path.join(workspaceDir, 'Config.toml');
-    
+
     // If file doesn't exist, nothing to do
     if (!fs.existsSync(configFilePath)) {
         return;
@@ -253,8 +288,15 @@ export async function removeTracingConfig(workspaceDir: string): Promise<void> {
     }
     
     // Remove the tracing configuration sections
-    let updatedContent = removeSection(existingContent, 'ballerinax.idetraceprovider');
-    
+    let updatedContent = removeSection(existingContent, LEGACY_PROVIDER_SECTION);
+
+    // Remove trace export keys from [ballerina.otel] section
+    updatedContent = removeKeysFromSection(
+        updatedContent,
+        'ballerina.otel',
+        Object.keys(OTEL_TRACE_CONFIG)
+    );
+
     // Remove tracing keys from [ballerina.observe] section
     updatedContent = removeKeysFromSection(
         updatedContent,

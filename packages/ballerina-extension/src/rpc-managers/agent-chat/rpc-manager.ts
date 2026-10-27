@@ -40,11 +40,10 @@ import {
     PendingApprovalInfo
 } from "@wso2/ballerina-core";
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 import { extension } from '../../BalExtensionContext';
 import { TracerMachine, TraceServer } from "../../features/tracing";
 import { TraceDetailsWebview } from "../../features/tracing/trace-details-webview";
+import { isTracingEnabled } from "../../features/tracing/utils";
 import { Trace } from "../../features/tracing/trace-server";
 import { v4 as uuidv4 } from "uuid";
 import { overrideChatEndpoint, updateChatSessionId } from "../../features/tryit/activator";
@@ -372,8 +371,7 @@ export class AgentChatRpcManager implements AgentChatAPI {
 
     async getTracingStatus(params?: TraceStatusRequest): Promise<TraceStatus> {
         if (params?.projectPath) {
-            const enabled = fs.existsSync(path.join(params.projectPath, 'trace_enabled.bal'));
-            return { enabled };
+            return { enabled: isTracingEnabled(params.projectPath) };
         }
         return { enabled: TracerMachine.isEnabled() };
     }
