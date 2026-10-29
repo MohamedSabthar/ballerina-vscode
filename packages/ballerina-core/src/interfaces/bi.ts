@@ -127,6 +127,10 @@ export type NodeMetadata = {
     approvalFunctionFor?: string[];
     // Whether anything besides agent tool annotations refers to this function; absent from an older language server
     referencedOutsideApprovals?: boolean;
+    // On an agent tool: whether its @ai:AgentTool annotation gates it for approval
+    requiresApproval?: boolean;
+    // On an agent tool: the local function its requiresApproval field names
+    approvalFunction?: string;
 };
 
 export type ParentMetadata = {

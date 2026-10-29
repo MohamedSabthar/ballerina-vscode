@@ -28,13 +28,16 @@ jest.mock("@wso2/ballerina-core", () => ({
     MACHINE_VIEW: { BIDiagram: "BI Diagram" },
 }));
 
-import {
-    createApprovalFunctionActions, parseApprovalFunctionName, readFunctionNodeParameters,
-} from "./approvalFunctionActions";
+import { createApprovalFunctionActions, readFunctionNodeParameters } from "./approvalFunctionActions";
+
+const NAME_LINE_RANGE = {
+    fileName: "agents.bal", startLine: { line: 3, offset: 18 }, endLine: { line: 3, offset: 35 },
+};
 
 function fakeRpcClient(
     functionNames: () => string[],
-    options: { usedBy?: string[]; annotations?: string; referencedElsewhere?: boolean | null } = {}
+    // `approvalFunction` is what the language server reports for a tool's @ai:AgentTool annotation.
+    options: { usedBy?: string[]; approvalFunction?: string; referencedElsewhere?: boolean | null } = {}
 ) {
     const showErrorMessage = jest.fn();
     const openView = jest.fn();
@@ -47,10 +50,12 @@ function fakeRpcClient(
                             // null leaves the flag out, as a language server that predates it does.
                             ...(options.referencedElsewhere === null
                                 ? {} : { referencedOutsideApprovals: options.referencedElsewhere ?? false }),
+                            ...(options.approvalFunction
+                                ? { requiresApproval: true, approvalFunction: options.approvalFunction } : {}),
                         },
                     },
                     properties: {
-                        annotations: { value: options.annotations ?? "" },
+                        functionName: { value: functionName, codedata: { lineRange: NAME_LINE_RANGE } },
                         parameters: {
                             value: {
                                 ids: { value: { type: { value: "string[]" }, variable: { value: "ids" } } },
@@ -79,51 +84,6 @@ function fakeRpcClient(
     return { rpcClient, showErrorMessage, openView, deleteByComponentInfo, getFunctionNode };
 }
 
-describe("approvalFunctionActions.verifyGenerated", () => {
-    it("does nothing when no function was added", async () => {
-        const { rpcClient, showErrorMessage } = fakeRpcClient(() => []);
-        const actions = createApprovalFunctionActions(rpcClient);
-        expect(await actions.verifyGenerated({ requiresApproval: "true" }, 0)).toBe(true);
-        expect(await actions.verifyGenerated({ requiresApproval: "isHighValue" }, 0)).toBe(true);
-        expect(showErrorMessage).not.toHaveBeenCalled();
-    });
-
-    it("passes once the added function exists", async () => {
-        const { rpcClient, showErrorMessage } = fakeRpcClient(() => ["addToCartApproval"]);
-        const actions = createApprovalFunctionActions(rpcClient);
-        const ok = await actions.verifyGenerated(
-            { requiresApproval: "addToCartApproval", generateApprovalFunction: "true" }, 0
-        );
-        expect(ok).toBe(true);
-        expect(showErrorMessage).not.toHaveBeenCalled();
-    });
-
-    it("waits for the language server to catch up before giving up", async () => {
-        let calls = 0;
-        const { rpcClient, showErrorMessage } = fakeRpcClient(() => (++calls >= 2 ? ["addToCartApproval"] : []));
-        const actions = createApprovalFunctionActions(rpcClient);
-        const ok = await actions.verifyGenerated(
-            { requiresApproval: "addToCartApproval", generateApprovalFunction: "true" }, 0
-        );
-        expect(ok).toBe(true);
-        expect(showErrorMessage).not.toHaveBeenCalled();
-    });
-
-    it("warns when the language server didn't create the added function", async () => {
-        const { rpcClient, showErrorMessage } = fakeRpcClient(() => []);
-        const actions = createApprovalFunctionActions(rpcClient);
-        const ok = await actions.verifyGenerated(
-            { requiresApproval: "addToCartApproval", generateApprovalFunction: "true" }, 0
-        );
-        expect(ok).toBe(false);
-        expect(showErrorMessage).toHaveBeenCalledTimes(1);
-        expect(showErrorMessage.mock.calls[0][0].message).toContain("'addToCartApproval'");
-        expect(showErrorMessage.mock.calls[0][0].message).toContain("language server may be out of date");
-        // The form has closed by now, so the message points the user back to the tool.
-        expect(showErrorMessage.mock.calls[0][0].message).toContain("open the tool and save it again");
-    });
-});
-
 describe("approvalFunctionActions.onOpenFunction", () => {
     it("opens the function's flow diagram", async () => {
         const { rpcClient, openView } = fakeRpcClient(() => ["addToCartApproval"]);
@@ -148,12 +108,13 @@ describe("approvalFunctionActions.onOpenFunction", () => {
 });
 
 describe("approvalFunctionActions.getFunctionInfo", () => {
-    it("reads the function's parameters and the tools that use it", async () => {
+    it("reads the function's parameters, the tools that use it and where its name is declared", async () => {
         const { rpcClient } = fakeRpcClient(() => ["addToCartApproval"]);
         expect(await createApprovalFunctionActions(rpcClient).getFunctionInfo("addToCartApproval")).toEqual({
             params: [{ type: "string[]", name: "ids" }, { type: "string", name: "addToCartApproval" }],
             usedBy: ["addToCart"],
             referencedElsewhere: false,
+            nameLineRange: NAME_LINE_RANGE,
         });
     });
 
@@ -167,20 +128,6 @@ describe("readFunctionNodeParameters", () => {
     it("skips incomplete entries and tolerates missing values", () => {
         expect(readFunctionNodeParameters({ a: { value: { type: { value: "int" } } } })).toEqual([]);
         expect(readFunctionNodeParameters(undefined)).toEqual([]);
-    });
-});
-
-describe("parseApprovalFunctionName", () => {
-    it.each([
-        ["@ai:AgentTool {\n    requiresApproval: addToCartApproval\n}", "addToCartApproval"],
-        ["@ai:AgentTool {requiresApproval: isHigh, auth: {clientId: \"x\"}}", "isHigh"],
-        ["@ai:AgentTool {requiresApproval: true}", undefined],
-        ["@ai:AgentTool {requiresApproval: false}", undefined],
-        ["@ai:AgentTool {requiresApproval: rules:isHigh}", undefined],
-        ["@ai:AgentTool", undefined],
-        ["@ai:AgentTool {requiresApproval: isolated function (string id) returns boolean => id != \"\"}", undefined],
-    ])("reads %p", (annotation, expected) => {
-        expect(parseApprovalFunctionName(annotation)).toBe(expected);
     });
 });
 
@@ -223,17 +170,15 @@ describe("approvalFunctionActions orphan cleanup", () => {
         expect(deleteByComponentInfo).not.toHaveBeenCalled();
     });
 
-    it("reads a tool's approval function from its annotation", async () => {
-        const { rpcClient } = fakeRpcClient(() => ["addToCart"], {
-            annotations: "@ai:AgentTool {\n    requiresApproval: addToCartApproval\n}",
-        });
+    it("reads a tool's approval function as the language server reports it", async () => {
+        const { rpcClient } = fakeRpcClient(() => ["addToCart"], { approvalFunction: "addToCartApproval" });
         const actions = createApprovalFunctionActions(rpcClient);
         expect(await actions.approvalFunctionOfTool("addToCart", "agents.bal", "/p")).toBe("addToCartApproval");
     });
 
     it("reads the tool from the file it lives in, not the agent's file", async () => {
         const { rpcClient, getFunctionNode } = fakeRpcClient(() => ["addToCart"], {
-            annotations: "@ai:AgentTool {requiresApproval: addToCartApproval}",
+            approvalFunction: "addToCartApproval",
         });
         const actions = createApprovalFunctionActions(rpcClient);
         expect(await actions.approvalFunctionOfTool("addToCart", "agents.bal", "/p")).toBe("addToCartApproval");
@@ -241,15 +186,14 @@ describe("approvalFunctionActions orphan cleanup", () => {
     });
 
     it("falls back to the agent's file when the tool can't be located", async () => {
-        const { rpcClient, getFunctionNode } = fakeRpcClient(() => [], {
-            annotations: "@ai:AgentTool {requiresApproval: addToCartApproval}",
-        });
+        const { rpcClient, getFunctionNode } = fakeRpcClient(() => [], { approvalFunction: "addToCartApproval" });
         await createApprovalFunctionActions(rpcClient).approvalFunctionOfTool("addToCart", "agents.bal", "/p");
         expect(getFunctionNode).toHaveBeenCalledWith(expect.objectContaining({ fileName: "agents.bal" }));
     });
 
-    it("reads no approval function for an unconditionally gated tool", async () => {
-        const { rpcClient } = fakeRpcClient(() => ["addToCart"], { annotations: "@ai:AgentTool {requiresApproval: true}" });
+    it("reads no approval function when the language server reports none", async () => {
+        // An unconditional gate, a qualified reference and an inline function are all reported without one.
+        const { rpcClient } = fakeRpcClient(() => ["addToCart"]);
         const actions = createApprovalFunctionActions(rpcClient);
         expect(await actions.approvalFunctionOfTool("addToCart", "agents.bal", "/p")).toBeUndefined();
     });

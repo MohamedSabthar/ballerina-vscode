@@ -13,8 +13,8 @@
   await frame.getByRole('button', { name: 'Save', exact: true }).first().click();
   await waitForSources((src) => {
     const flat = collapseWhitespace(src);
-    return flat.includes('@ai:AgentTool { requiresApproval: sendEmailNotify } isolated function sendMail(')
+    return flat.includes('@ai:AgentTool { requiresApproval: sendEmailApproval } isolated function sendMail(')
       && flat.includes('tools = [sendMail]');
   }, 'tool renamed to sendMail with its approval function kept');
-  console.log('renamed sendEmail to sendMail; requiresApproval still sendEmailNotify');
+  console.log('renamed sendEmail to sendMail; requiresApproval still sendEmailApproval');
 }

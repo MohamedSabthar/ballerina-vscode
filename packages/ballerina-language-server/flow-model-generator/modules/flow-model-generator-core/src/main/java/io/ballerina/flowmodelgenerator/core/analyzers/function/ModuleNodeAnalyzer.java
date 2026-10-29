@@ -97,6 +97,18 @@ public class ModuleNodeAnalyzer extends NodeVisitor {
      */
     public static final String REFERENCED_OUTSIDE_APPROVALS_KEY = "referencedOutsideApprovals";
 
+    /**
+     * Metadata key telling whether an agent tool's {@code @ai:AgentTool} annotation gates it for approval. Present
+     * only on tools whose annotation has a {@code requiresApproval} field.
+     */
+    public static final String REQUIRES_APPROVAL_KEY = "requiresApproval";
+
+    /**
+     * Metadata key naming the local function an agent tool's {@code requiresApproval} field refers to. Absent for
+     * {@code true}/{@code false}, a qualified reference and an inline function.
+     */
+    public static final String APPROVAL_FUNCTION_KEY = "approvalFunction";
+
     private final ModuleInfo moduleInfo;
     private final SemanticModel semanticModel;
     private final Gson gson;
@@ -183,6 +195,15 @@ public class ModuleNodeAnalyzer extends NodeVisitor {
                     functionLineRange.fileName(),
                     functionLineRange.startLine(),
                     functionDefinitionNode.functionBody().lineRange().startLine()));
+        }
+
+        // Tell the tool forms whether this agent tool requires approval and which local function decides it, read
+        // from the annotation's syntax tree. Needs no module roots, so the tool lookup paths get it too.
+        if (ApprovalFunctionSync.requiresApprovalField(functionDefinitionNode.metadata()).isPresent()) {
+            nodeBuilder.metadata().data(REQUIRES_APPROVAL_KEY,
+                    ApprovalFunctionSync.requiresApproval(functionDefinitionNode.metadata()));
+            ApprovalFunctionSync.approvalFunctionName(functionDefinitionNode.metadata())
+                    .ifPresent(name -> nodeBuilder.metadata().data(APPROVAL_FUNCTION_KEY, name));
         }
 
         // Tell the function form when this function is an agent tool's approval function, so it can keep its

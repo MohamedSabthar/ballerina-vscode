@@ -23,6 +23,7 @@ import {
     FlowNode,
     FunctionModel,
     LineRange,
+    NodeMetadata,
     NodeProperties,
     Property,
     RecordTypeField,
@@ -40,6 +41,7 @@ import {
     buildApprovalToolData,
     createRequiresApprovalField,
     ExistingApprovalConfig,
+    existingApprovalConfig,
 } from "./formUtils";
 import { createApprovalFunctionActions } from "./approvalFunctionActions";
 import {
@@ -179,24 +181,13 @@ function toAuthSource(key: string, value: unknown, isExpression: boolean): strin
     return JSON.stringify(text);
 }
 
-// Parse an existing `requiresApproval: <boolean|identifier>` field out of an @ai:AgentTool
-// annotation, to prefill the "Requires Approval" control when editing a custom tool that already
-// has the gate set.
-function parseRequiresApproval(annotationValue: string): ExistingApprovalConfig | undefined {
-    const match = /\brequiresApproval\b\s*:\s*([^,}]+)/.exec(annotationValue);
-    if (!match) return undefined;
-    const raw = match[1].trim();
-    if (raw === "true") return {};
-    if (raw === "false") return undefined;
-    return { functionName: raw };
-}
-
 // Insert, replace, or remove a scalar `key: value` field (no nested braces, unlike auth's record
 // value) inside an @ai:AgentTool annotation string. Mirrors the auth block's matchBraced-based
 // upsert in spirit, but auth's value is itself a `{ ... }` record while requiresApproval's value is
 // a bare boolean or identifier, so a brace-unaware match up to the next comma/close-brace suffices.
+// The match also stops at the end of the line, so the line break before a closing brace is kept.
 function upsertScalarAnnotationField(annotationStr: string, key: string, source: string | undefined): string {
-    const match = new RegExp(`\\b${key}\\b\\s*:\\s*[^,}]+`).exec(annotationStr);
+    const match = new RegExp(`\\b${key}\\b\\s*:\\s*[^,}\\n]+`).exec(annotationStr);
     if (match) {
         let s = match.index;
         let e = match.index + match[0].length;
@@ -231,11 +222,20 @@ function resolveApprovalSource(data: FormValues): string | undefined {
     return approvalFn || "true";
 }
 
-function findAgentToolAnnotation(model: FunctionModel): { key: string; value: string } | undefined {
+// The @ai:AgentTool annotation of a class-method tool. Its codedata carries the approval gate as the language
+// server read it from the annotation: `requiresApproval`, and the local `approvalFunction` it names.
+function findAgentToolAnnotation(model: FunctionModel): {
+    key: string; value: string; requiresApproval?: boolean; approvalFunction?: string;
+} | undefined {
     const props = (model?.properties ?? {}) as Record<string, any>;
     for (const [key, prop] of Object.entries(props)) {
         if (prop?.codedata?.type === "ANNOTATION_ATTACHMENT" && prop?.codedata?.originalName === "AgentTool") {
-            return { key, value: typeof prop.value === "string" ? prop.value : "" };
+            return {
+                key,
+                value: typeof prop.value === "string" ? prop.value : "",
+                requiresApproval: prop.codedata.requiresApproval,
+                approvalFunction: prop.codedata.approvalFunction,
+            };
         }
     }
     return undefined;
@@ -429,7 +429,10 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
                     });
 
                     oauthPropertiesRef.current = oauthProperties;
-                    const existingApproval = parseRequiresApproval(annotationValue);
+                    const toolMetadata = node.metadata?.data as NodeMetadata | undefined;
+                    const existingApproval = existingApprovalConfig(
+                        toolMetadata?.requiresApproval, toolMetadata?.approvalFunction
+                    );
                     previousApprovalFunctionRef.current = existingApproval?.functionName;
                     const existingConfig = parseAuth(annotationValue, oauthProperties.map(({ key }) => key));
                     const { oauthFields, oauthRecordFields } = buildOAuthFields(oauthProperties, existingConfig);
@@ -454,8 +457,11 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
                     const model = modelResp.function;
 
                     oauthPropertiesRef.current = oauthProperties;
-                    const annotationValue = findAgentToolAnnotation(model)?.value ?? "";
-                    const existingApproval = parseRequiresApproval(annotationValue);
+                    const agentTool = findAgentToolAnnotation(model);
+                    const annotationValue = agentTool?.value ?? "";
+                    const existingApproval = existingApprovalConfig(
+                        agentTool?.requiresApproval, agentTool?.approvalFunction
+                    );
                     previousApprovalFunctionRef.current = existingApproval?.functionName;
                     const existingConfig = parseAuth(annotationValue, oauthProperties.map(({ key }) => key));
                     const { oauthFields, oauthRecordFields } = buildOAuthFields(oauthProperties, existingConfig);
@@ -589,10 +595,7 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
                 artifactType: DIRECTORY_MAP.TYPE,
             } as any);
             await rpcClient.getAIAgentRpcClient().fixMissingImports();
-            // Clean up the previous function only once the new reference is known to resolve.
-            if (await approvalActions.verifyGenerated(buildApprovalToolData(data))) {
-                await deleteDetachedApprovalFunction(data);
-            }
+            await deleteDetachedApprovalFunction(data);
             await onSave(String(updatedModel.name.value));
         } catch {
             await rpcClient.getCommonRpcClient().showErrorMessage({ message: "Failed to update the agent tool." });
@@ -701,10 +704,7 @@ export function AgentToolForm(props: AgentToolFormProps): JSX.Element {
                 throw new Error("Agent tool source generation returned no artifacts");
             }
             await rpcClient.getAIAgentRpcClient().fixMissingImports();
-            // Clean up the previous function only once the new reference is known to resolve.
-            if (await approvalActions.verifyGenerated(buildApprovalToolData(data))) {
-                await deleteDetachedApprovalFunction(data);
-            }
+            await deleteDetachedApprovalFunction(data);
             await onSave(String(properties.functionName.value));
         } catch {
             await rpcClient.getCommonRpcClient().showErrorMessage({

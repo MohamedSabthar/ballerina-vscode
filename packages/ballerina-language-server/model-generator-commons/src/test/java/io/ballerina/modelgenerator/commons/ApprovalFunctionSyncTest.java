@@ -59,12 +59,42 @@ public class ApprovalFunctionSyncTest {
                 {"@ai:AgentTool {requiresApproval: isolated function (string to) returns boolean => true}", null},
                 {"@display {label: \"x\"}", null},
                 {null, null},
+                // A commented-out field is trivia, never the real field
+                {"@ai:AgentTool {\n    // requiresApproval: oldFn,\n    requiresApproval: newFn\n}", "newFn"},
+                {"@ai:AgentTool {\n    requiresApproval: newFn // requiresApproval: oldFn\n}", "newFn"},
+                {"@ai:AgentTool {\n    // requiresApproval: oldFn\n}", null},
+                {"@display {label: \"x\"}\n@ai:AgentTool {requiresApproval: gate}", "gate"},
         };
     }
 
     @Test(dataProvider = "annotations")
     public void testApprovalFunctionName(String annotations, String expected) {
         Assert.assertEquals(ApprovalFunctionSync.approvalFunctionName(annotations).orElse(null), expected);
+        if (annotations != null) {
+            // The syntax-node reading of a parsed tool gives the same answer as the text overload
+            FunctionDefinitionNode tool = function(annotations + "\nisolated function tool() returns string => \"\";");
+            Assert.assertEquals(ApprovalFunctionSync.approvalFunctionName(tool.metadata()).orElse(null), expected);
+        }
+    }
+
+    @DataProvider(name = "gates")
+    public Object[][] gates() {
+        return new Object[][]{
+                {"@ai:AgentTool {requiresApproval: true}", true},
+                {"@ai:AgentTool {requiresApproval: sendEmailApproval}", true},
+                {"@ai:AgentTool {requiresApproval: rules:isHigh}", true},
+                {"@ai:AgentTool {requiresApproval: false}", false},
+                {"@ai:AgentTool {\n    // requiresApproval: true,\n    requiresApproval: false\n}", false},
+                {"@ai:AgentTool {\n    // requiresApproval: true\n}", false},
+                {"@ai:AgentTool", false},
+                {"@display {label: \"x\"}", false},
+        };
+    }
+
+    @Test(dataProvider = "gates")
+    public void testRequiresApproval(String annotations, boolean expected) {
+        FunctionDefinitionNode tool = function(annotations + "\nisolated function tool() returns string => \"\";");
+        Assert.assertEquals(ApprovalFunctionSync.requiresApproval(tool.metadata()), expected);
     }
 
     private static ModulePartNode root(String source) {
@@ -82,6 +112,15 @@ public class ApprovalFunctionSyncTest {
 
                 @ai:AgentTool
                 isolated function plainTool() returns string => "";
+
+                @ai:AgentTool {
+                    // requiresApproval: sharedApproval,
+                    requiresApproval: true
+                }
+                isolated function commentedTool() returns string => "";
+
+                @ai:AgentTool {requiresApproval: rules:sharedApproval}
+                isolated function qualifiedTool() returns string => "";
 
                 isolated function sharedApproval(string id) returns boolean => true;
                 """);
@@ -117,6 +156,15 @@ public class ApprovalFunctionSyncTest {
         Assert.assertTrue(stub.startsWith("isolated function sendEmailApproval(string to, string subject) "
                 + "returns boolean {"), stub);
         Assert.assertTrue(stub.contains("return true;"), stub);
+    }
+
+    @Test
+    public void testParamsReadDefaultableParametersWithoutTheDefault() {
+        FunctionDefinitionNode tool = function(
+                "isolated function search(string query, int 'limit = 10, string... tags) returns string => query;");
+        // Rest parameters aren't read: the ai module doesn't allow them on agent tools.
+        Assert.assertEquals(ApprovalFunctionSync.params(tool),
+                List.of(new Param("string", "query"), new Param("int", "'limit")));
     }
 
     @Test

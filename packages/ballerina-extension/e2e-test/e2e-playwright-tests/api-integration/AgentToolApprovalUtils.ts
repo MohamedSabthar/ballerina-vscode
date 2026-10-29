@@ -106,8 +106,11 @@ export async function addApprovalFunction(name?: string): Promise<void> {
     if (name) {
         await frame.getByRole('textbox', { name: /^Function Name\*/ }).fill(name);
     }
+    // Add stays disabled until the language server has checked the name.
+    const confirm = frame.locator('#approval-function-add-confirm');
+    await frame.locator('#approval-function-add-confirm vscode-button:not([disabled])').waitFor({ timeout: 20000 });
     // A dispatched DOM click doesn't reach this toolkit button's handler; a real click does.
-    await frame.locator('#approval-function-add-confirm').click();
+    await confirm.click();
     await frame.locator('[data-testid="approval-function-attached"]').waitFor({ timeout: 20000 });
 }
 

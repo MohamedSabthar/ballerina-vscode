@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { NodeProperties, Property, RecordTypeField, ToolParameters,
+import { ELineRange, NodeProperties, Property, RecordTypeField, ToolParameters,
     ValueTypeConstraint, getPrimaryInputType } from "@wso2/ballerina-core";
 import { ApprovalFunctionParam, FormField, FormValues, Parameter } from "@wso2/ballerina-side-panel";
 
@@ -300,10 +300,21 @@ export const stripCodeFencesInline = (text: string): string =>
 export const APPROVAL_FUNCTION_KEY = "approvalFunction";
 export const GENERATE_APPROVAL_FUNCTION_KEY = "generateApprovalFunction";
 
-// Prefill state for the "Requires Approval" control, parsed from an existing @ai:AgentTool
-// annotation when editing a tool that already has the gate set.
+// Prefill state for the "Requires Approval" control when editing a tool that already has the gate set.
 export interface ExistingApprovalConfig {
     functionName?: string;
+}
+
+// The prefill from what the language server reports about a tool's @ai:AgentTool annotation: no gate when it
+// doesn't require approval; otherwise the gate, with the local function it names, if any. A qualified or inline
+// function isn't reported, so it reads as a gate without an attached function.
+export function existingApprovalConfig(
+    requiresApproval?: boolean, approvalFunction?: string
+): ExistingApprovalConfig | undefined {
+    if (!requiresApproval) {
+        return undefined;
+    }
+    return approvalFunction ? { functionName: approvalFunction } : {};
 }
 
 export interface RequiresApprovalOptions {
@@ -314,9 +325,13 @@ export interface RequiresApprovalOptions {
     baseName?: string | ((values: FormValues) => string);
     toolName?: string | ((values: FormValues) => string);
     getToolParameters?: (values: FormValues) => ApprovalFunctionParam[];
-    isNameTaken?: (name: string) => Promise<boolean>;
     onOpenFunction?: (name: string) => void;
-    getFunctionInfo?: (name: string) => Promise<{ params: ApprovalFunctionParam[]; usedBy: string[] } | null>;
+    getFunctionInfo?: (name: string) => Promise<{
+        params: ApprovalFunctionParam[];
+        usedBy: string[];
+        referencedElsewhere?: boolean;
+        nameLineRange?: ELineRange;
+    } | null>;
 }
 
 const isAiContextType = (type: string): boolean => type.replace(/\s/g, "") === "ai:Context";
@@ -376,7 +391,6 @@ export function createRequiresApprovalField(
             },
             toolName: options.toolName,
             getToolParameters: options.getToolParameters ?? ((values) => readToolParameters(values)),
-            isNameTaken: options.isNameTaken,
             onOpenFunction: options.onOpenFunction,
             getFunctionInfo: options.getFunctionInfo,
         },

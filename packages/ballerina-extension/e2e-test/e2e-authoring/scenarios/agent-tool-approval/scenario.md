@@ -18,9 +18,9 @@ approval function too.
 | 04 | Edit a tool's parameters | yellow sync note; after save `sendEmailApproval(string to, string subject, string cc)` |
 | 05 | Edit the approval function's parameters | function form shows Parameters read-only (no add / edit / delete) |
 | 06 | Remove (detach) | `requiresApproval: true`; `sendEmailApproval` deleted |
-| 07 | Add an approval function while editing | inline add form; `requiresApproval: sendEmailNotify` and the generated function |
-| 08 | Rename the tool | renamed tool keeps `requiresApproval: sendEmailNotify` |
-| 09 | Turn Requires Approval off | no `requiresApproval` in the annotation; `sendEmailNotify` deleted |
+| 07 | Add an approval function while editing | inline add form; `requiresApproval: sendEmailApproval` and the generated function |
+| 08 | Rename the tool | renamed tool keeps `requiresApproval: sendEmailApproval` |
+| 09 | Turn Requires Approval off | no `requiresApproval` in the annotation; `sendEmailApproval` deleted |
 | 10 | Delete the tool | after re-adding an approval function, deleting the tool removes both the tool and its approval function |
 
 Gaps (not covered here, covered by L2/L3 tests instead):

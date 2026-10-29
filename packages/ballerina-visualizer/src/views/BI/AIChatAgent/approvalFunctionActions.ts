@@ -16,20 +16,10 @@
  * under the License.
  */
 
-import { EVENT_TYPE, MACHINE_VIEW, NodeMetadata } from "@wso2/ballerina-core";
+import { ELineRange, EVENT_TYPE, MACHINE_VIEW, NodeMetadata } from "@wso2/ballerina-core";
 import { BallerinaRpcClient } from "@wso2/ballerina-rpc-client";
 import { ApprovalFunctionParam } from "@wso2/ballerina-side-panel";
 import { findFunctionByName } from "../FlowDiagram/utils";
-
-// The function a `requiresApproval: <fn>` annotation field names, or undefined for `true`/`false`, a
-// qualified `mod:fn` reference, an inline function, or no field at all.
-export function parseApprovalFunctionName(annotation: string): string | undefined {
-    const raw = /\brequiresApproval\b\s*:\s*([^,}\s]+)\s*(?:[,}]|$)/.exec(annotation)?.[1]?.trim();
-    if (!raw || raw === "true" || raw === "false" || raw.includes(":")) {
-        return undefined;
-    }
-    return raw;
-}
 
 export interface ApprovalFunctionInfo {
     params: ApprovalFunctionParam[];
@@ -38,6 +28,8 @@ export interface ApprovalFunctionInfo {
     // Whether anything besides those annotations refers to the function (a call, an ai:ToolConfig). Unknown
     // when the language server predates the check.
     referencedElsewhere?: boolean;
+    // Where the function's name is declared, so a name check can treat this function as an existing declaration.
+    nameLineRange?: ELineRange;
 }
 
 // A FUNCTION_DEFINITION node keeps its parameters as REPEATABLE_PROPERTY entries, each holding
@@ -95,6 +87,7 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
                 params: readFunctionNodeParameters(node.properties?.parameters?.value),
                 usedBy: Array.isArray(usedBy) ? usedBy.map(String) : [],
                 referencedElsewhere: typeof referencedElsewhere === "boolean" ? referencedElsewhere : undefined,
+                nameLineRange: node.properties?.functionName?.codedata?.lineRange,
             };
         } catch (error) {
             console.error(">>> Error reading approval function", error);
@@ -137,51 +130,24 @@ export function createApprovalFunctionActions(rpcClient: BallerinaRpcClient) {
 
     return {
         deleteIfUnused,
-        // The approval function named in a tool's @ai:AgentTool annotation, read before the tool is deleted. The
-        // tool can live in any file of the package; `fileName` is only the fallback when it can't be located.
+        // The approval function a tool's @ai:AgentTool annotation names, as the language server reports it on the
+        // tool's node, read before the tool is deleted. The tool can live in any file of the package; `fileName`
+        // is only the fallback when it can't be located.
         approvalFunctionOfTool: async (
             toolName: string, fileName: string, projectPath?: string
         ): Promise<string | undefined> => {
             try {
                 const tool = await locate(toolName);
                 const node = await readFunction(toolName, tool?.filePath ?? fileName, projectPath);
-                const annotations = node?.properties?.annotations?.value;
-                return typeof annotations === "string" ? parseApprovalFunctionName(annotations) : undefined;
+                return (node?.metadata?.data as NodeMetadata | undefined)?.approvalFunction;
             } catch (error) {
                 console.error(">>> Error reading tool annotation", error);
                 return undefined;
             }
         },
-        isNameTaken: async (name: string): Promise<boolean> => Boolean(await locate(name)),
         // The approval function's current parameters and the agent tools that use it, so the tool form can
         // warn about a mismatch before saving. Null when the function can't be read.
         getFunctionInfo,
-        // After a save that asked the language server to generate an approval function, confirm the
-        // function exists. A language server that predates this feature ignores the request, which
-        // otherwise only surfaces later as an Open that can't find the function. The tool itself is
-        // saved either way, so callers close their form: saving a create form again would create the
-        // tool twice.
-        verifyGenerated: async (
-            approvalData: { requiresApproval?: string; generateApprovalFunction?: string },
-            retryDelayMs: number = 400
-        ): Promise<boolean> => {
-            const name = approvalData.requiresApproval;
-            if (approvalData.generateApprovalFunction !== "true" || !name) {
-                return true;
-            }
-            // The edits were just applied; give the language server a moment to see them.
-            for (let attempt = 0; attempt < 3; attempt++) {
-                if (await locate(name)) {
-                    return true;
-                }
-                await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-            }
-            await rpcClient.getCommonRpcClient().showErrorMessage({
-                message: `The tool now references '${name}', but the language server didn't create it. `
-                    + "The language server may be out of date. Update it, then open the tool and save it again.",
-            });
-            return false;
-        },
         onOpenFunction: async (name: string): Promise<void> => {
             const found = await locate(name);
             if (!found) {

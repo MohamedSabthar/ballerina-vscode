@@ -28,6 +28,7 @@ import {
     buildApprovalToolData,
     createRequiresApprovalField,
     defaultApprovalFunctionName,
+    existingApprovalConfig,
     readToolParameters,
 } from "./formUtils";
 
@@ -130,5 +131,15 @@ describe("createRequiresApprovalField", () => {
         expect(field.value).toBe(false);
         expect(field.approvalConfig?.initialFunction).toBe("");
         expect(field.approvalConfig?.presentation).toBe("view");
+    });
+});
+
+describe("existingApprovalConfig", () => {
+    it("prefills from what the language server reports about the tool's annotation", () => {
+        expect(existingApprovalConfig(true, "isHighValue")).toEqual({ functionName: "isHighValue" });
+        // Unconditional, or a qualified or inline function the language server doesn't report.
+        expect(existingApprovalConfig(true, undefined)).toEqual({});
+        expect(existingApprovalConfig(false, undefined)).toBeUndefined();
+        expect(existingApprovalConfig(undefined, undefined)).toBeUndefined();
     });
 });

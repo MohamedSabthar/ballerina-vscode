@@ -1466,9 +1466,6 @@ export function AIAgentSidePanel(props: BIFlowDiagramProps) {
         setSubmittingTool(true);
         try {
             await onSubmit(toolModel);
-            if (targetNode) {
-                await approvalActions.verifyGenerated(approvalData);
-            }
         } finally {
             setSubmittingTool(false);
         }

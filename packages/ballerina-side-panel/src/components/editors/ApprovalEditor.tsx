@@ -20,8 +20,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useFormState } from "react-hook-form";
 import { createPortal } from "react-dom";
 import styled from "@emotion/styled";
+import { ELineRange, ExpressionProperty } from "@wso2/ballerina-core";
+import { useRpcContext } from "@wso2/ballerina-rpc-client";
 import { Button, CheckBoxGroup, Codicon, FormCheckBox, LinkButton, TextField, ThemeColors } from "@wso2/ui-toolkit";
 import { ApprovalFieldConfig, ApprovalFunctionParam, FormField } from "../Form/types";
+import { fetchIdentifierDiagnostics } from "./utils";
 import { indentedFieldStyles } from "../Form/styles";
 import { useFormContext } from "../../context";
 import { PanelContainer } from "../Panel";
@@ -190,48 +193,110 @@ function isChecked(value: unknown): boolean {
     return value === true || value === "true";
 }
 
+const FUNCTION_NAME_LABEL = "Function Name";
+
+// The name field as a module-level function-name property, so the language server's identifier check validates
+// it like any other function name: a Ballerina identifier, not a keyword, not already declared. An existing
+// declaration's own name is accepted (the edit case), which the check keys off the property's line range.
+function functionNameProperty(existing?: ExistingApprovalFunction): ExpressionProperty {
+    return {
+        metadata: { label: FUNCTION_NAME_LABEL, description: "" },
+        value: existing?.name ?? "",
+        optional: false,
+        editable: true,
+        types: [{ fieldType: "IDENTIFIER", scope: "Global", selected: true }],
+        ...(existing?.lineRange ? { codedata: { lineRange: existing.lineRange } } : {}),
+    };
+}
+
+interface ExistingApprovalFunction {
+    name: string;
+    lineRange?: ELineRange;
+}
+
 interface AddApprovalFunctionFormProps {
     defaultName: string;
     toolName?: string;
-    isNameTaken?: (name: string) => Promise<boolean>;
+    // The approval function attached when the tool form opened. It stays in source until the tool is saved, so
+    // its name is accepted: saving then keeps that function and syncs it with the tool.
+    existingFunction?: ExistingApprovalFunction;
     params: ApprovalFunctionParam[];
     onCancel: () => void;
     onAdd: (name: string) => void;
 }
 
 export function AddApprovalFunctionForm(props: AddApprovalFunctionFormProps) {
-    const { defaultName, toolName, isNameTaken, params, onCancel, onAdd } = props;
+    const { defaultName, toolName, existingFunction, params, onCancel, onAdd } = props;
+    const { rpcClient } = useRpcContext();
+    const { fileName, targetLineRange } = useFormContext();
     const [name, setName] = useState<string>(defaultName);
-    const [error, setError] = useState<string>("");
+    const [serverError, setServerError] = useState<string>("");
     const [checking, setChecking] = useState<boolean>(false);
 
-    const validate = (value: string): string => {
+    const localError = (value: string): string => {
         const trimmed = value.trim();
         if (!trimmed) return "Enter a name for the approval function.";
-        if (!IDENTIFIER.test(trimmed)) return "Use letters, digits and underscores, starting with a letter.";
         if (toolName && trimmed === toolName) return "Use a different name from the tool.";
         return "";
     };
 
-    const handleAdd = async () => {
+    // Ask the language server about the name as it's typed, the way IdentifierField checks other names.
+    const startLine = targetLineRange?.startLine;
+    useEffect(() => {
         const trimmed = name.trim();
-        const message = validate(trimmed);
-        if (message) {
-            setError(message);
+        setServerError("");
+        if (localError(trimmed) || !rpcClient) {
+            setChecking(false);
             return;
         }
-        if (isNameTaken) {
-            setChecking(true);
+        setChecking(true);
+        let cancelled = false;
+        const timer = setTimeout(async () => {
             try {
-                if (await isNameTaken(trimmed)) {
-                    setError(`A function named '${trimmed}' already exists. Choose another name.`);
-                    return;
+                const { firstError } = await fetchIdentifierDiagnostics(rpcClient, {
+                    filePath: fileName,
+                    startLine,
+                    value: trimmed,
+                    property: functionNameProperty(existingFunction),
+                    label: FUNCTION_NAME_LABEL,
+                });
+                if (!cancelled) {
+                    setServerError(firstError?.message ?? "");
                 }
+            } catch (error) {
+                console.error("Failed to validate the approval function name:", error);
             } finally {
-                setChecking(false);
+                if (!cancelled) {
+                    setChecking(false);
+                }
             }
+        }, 250);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [name, toolName, existingFunction?.name, existingFunction?.lineRange, rpcClient, fileName,
+        startLine?.line, startLine?.offset]);
+
+    const error = localError(name) || serverError;
+
+    // Add clicked while the name is still being checked goes through once the check passes; an error from the
+    // check shows instead.
+    const [addRequested, setAddRequested] = useState<boolean>(false);
+    useEffect(() => {
+        if (!addRequested || checking) {
+            return;
         }
-        onAdd(trimmed);
+        setAddRequested(false);
+        if (!error) {
+            onAdd(name.trim());
+        }
+    }, [addRequested, checking, error]);
+
+    const handleAdd = () => {
+        if (!error) {
+            setAddRequested(true);
+        }
     };
 
     const toolLabel = toolName ? `each ${toolName} call` : "each call to this tool";
@@ -244,15 +309,12 @@ export function AddApprovalFunctionForm(props: AddApprovalFunctionFormProps) {
             </Description>
             <TextField
                 id="approval-function-name"
-                label="Function Name"
+                label={FUNCTION_NAME_LABEL}
                 required
                 description="Generated from the tool; you can change it."
                 value={name}
                 errorMsg={error || undefined}
-                onTextChange={(value: string) => {
-                    setName(value);
-                    setError(validate(value));
-                }}
+                onTextChange={(value: string) => setName(value)}
             />
             <LabelGroup>
                 <Label>Parameters</Label>
@@ -278,7 +340,7 @@ export function AddApprovalFunctionForm(props: AddApprovalFunctionFormProps) {
                     id="approval-function-add-confirm"
                     appearance="primary"
                     onClick={handleAdd}
-                    disabled={checking || Boolean(validate(name))}
+                    disabled={Boolean(error) || addRequested}
                 >
                     Add
                 </Button>
@@ -340,9 +402,36 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
         };
     }, [functionName, isNew, config.getFunctionInfo]);
 
+    // The function attached when the form opened. Saving deletes it once the tool no longer refers to it, unless
+    // another tool uses it or something else refers to it, so the form warns first. Its declaration also lets the
+    // add form accept its name after a Remove.
+    const initialFunction = config.initialFunction?.trim() || undefined;
+    const [initialInfo, setInitialInfo] = useState<Awaited<ReturnType<NonNullable<ApprovalFieldConfig["getFunctionInfo"]>>>>(null);
+    useEffect(() => {
+        if (!initialFunction || !config.getFunctionInfo) {
+            setInitialInfo(null);
+            return;
+        }
+        let cancelled = false;
+        config.getFunctionInfo(initialFunction).then((result) => {
+            if (!cancelled) {
+                setInitialInfo(result);
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [initialFunction, config.getFunctionInfo]);
+    const deletesInitialFunction = Boolean(initialFunction)
+        && (!checked || functionName !== initialFunction)
+        && initialInfo?.referencedElsewhere === false
+        && initialInfo.usedBy.length <= 1;
+
     const attach = (name: string) => {
         setValue(config.functionKey, name, { shouldDirty: true });
-        setValue(config.generateKey, true, { shouldDirty: true });
+        // Adding back the function the tool had (after a Remove) attaches that existing function again rather
+        // than a new one: saving keeps it and syncs it with the tool.
+        setValue(config.generateKey, name !== initialFunction, { shouldDirty: true });
         setAdding(false);
     };
 
@@ -376,7 +465,9 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
         <AddApprovalFunctionForm
             defaultName={resolve(config.defaultFunctionName) ?? ""}
             toolName={toolName}
-            isNameTaken={config.isNameTaken}
+            existingFunction={initialFunction
+                ? { name: initialFunction, lineRange: initialInfo?.nameLineRange }
+                : undefined}
             params={params}
             onCancel={() => setAdding(false)}
             onAdd={attach}
@@ -447,6 +538,15 @@ export function ApprovalEditor(props: ApprovalEditorProps) {
                     )}
                     {invalidNameError(functionName)}
                 </FormSection>
+            )}
+            {/* Outside the section: unticking Requires Approval hides it but still drops the function. */}
+            {deletesInitialFunction && (
+                <div data-testid="approval-function-delete-note">
+                    <WarningBanner
+                        warningMsg={`Saving will delete ${initialFunction}. To turn approval off for now without `
+                            + "losing it, keep it attached and make the function return false."}
+                    />
+                </div>
             )}
             {adding && config.presentation === "view" && createPortal(
                 <PanelContainer

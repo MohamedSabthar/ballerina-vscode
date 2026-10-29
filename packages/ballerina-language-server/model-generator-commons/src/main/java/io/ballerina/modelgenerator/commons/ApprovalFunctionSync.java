@@ -22,16 +22,24 @@ import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
+import io.ballerina.compiler.syntax.tree.AnnotationNode;
+import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
 import io.ballerina.compiler.syntax.tree.ClassDefinitionNode;
+import io.ballerina.compiler.syntax.tree.DefaultableParameterNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.FunctionSignatureNode;
+import io.ballerina.compiler.syntax.tree.MappingFieldNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
 import io.ballerina.compiler.syntax.tree.ModuleMemberDeclarationNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.Node;
+import io.ballerina.compiler.syntax.tree.NodeParser;
 import io.ballerina.compiler.syntax.tree.NonTerminalNode;
 import io.ballerina.compiler.syntax.tree.ParameterNode;
+import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.RequiredParameterNode;
+import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.projects.Document;
@@ -51,8 +59,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Keeps the approval function referenced by an {@code @ai:AgentTool {requiresApproval: <fn>}} annotation in step
@@ -68,8 +74,10 @@ import java.util.regex.Pattern;
  */
 public final class ApprovalFunctionSync {
 
-    private static final Pattern REQUIRES_APPROVAL =
-            Pattern.compile("\\brequiresApproval\\s*:\\s*('?[A-Za-z_][A-Za-z0-9_]*)(?=\\s*(?:[,}]|$))");
+    private static final String AGENT_TOOL_ANNOTATION = "AgentTool";
+    private static final String REQUIRES_APPROVAL_FIELD = "requiresApproval";
+    // Annotation text from a form has no function after it; this gives the parser one to attach it to.
+    private static final String PARSE_ANCHOR = "function __approvalProbe() {}";
     private static final String AI_CONTEXT_TYPE = "ai:Context";
 
     /**
@@ -89,25 +97,102 @@ public final class ApprovalFunctionSync {
     }
 
     /**
-     * Returns the approval function an {@code @ai:AgentTool} annotation refers to, if it refers to one by a plain
-     * name. {@code true}/{@code false} and qualified references ({@code mod:fn}) yield nothing.
+     * Returns the {@code requiresApproval} field of an {@code @ai:AgentTool} annotation. The field is read from the
+     * syntax tree, so a commented-out field is never taken for the real one.
+     *
+     * @param annotation the annotation
+     * @return the field, or empty when the annotation isn't {@code @ai:AgentTool} or has no such field
+     */
+    public static Optional<SpecificFieldNode> requiresApprovalField(AnnotationNode annotation) {
+        if (!(annotation.annotReference() instanceof QualifiedNameReferenceNode reference)
+                || !AGENT_TOOL_ANNOTATION.equals(reference.identifier().text().trim())
+                || annotation.annotValue().isEmpty()) {
+            return Optional.empty();
+        }
+        for (MappingFieldNode field : annotation.annotValue().get().fields()) {
+            if (field instanceof SpecificFieldNode specificField
+                    && REQUIRES_APPROVAL_FIELD.equals(fieldName(specificField))) {
+                return Optional.of(specificField);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the {@code requiresApproval} field of the first {@code @ai:AgentTool} annotation among a function's
+     * annotations.
+     *
+     * @param metadata the function's metadata
+     * @return the field, or empty when the function isn't an agent tool or has no such field
+     */
+    public static Optional<SpecificFieldNode> requiresApprovalField(Optional<MetadataNode> metadata) {
+        if (metadata.isEmpty()) {
+            return Optional.empty();
+        }
+        for (AnnotationNode annotation : metadata.get().annotations()) {
+            if (annotation.annotReference() instanceof QualifiedNameReferenceNode reference
+                    && AGENT_TOOL_ANNOTATION.equals(reference.identifier().text().trim())) {
+                return requiresApprovalField(annotation);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Whether a function's {@code @ai:AgentTool} annotation gates it for approval: it has a {@code requiresApproval}
+     * field whose value isn't the literal {@code false}.
+     *
+     * @param metadata the function's metadata
+     * @return true when the tool requires approval
+     */
+    public static boolean requiresApproval(Optional<MetadataNode> metadata) {
+        return requiresApprovalField(metadata).map(field -> !isFalseLiteral(field)).orElse(false);
+    }
+
+    /**
+     * Returns the approval function a function's {@code @ai:AgentTool} annotation refers to, if it refers to one by
+     * a plain name. {@code true}/{@code false}, qualified references ({@code mod:fn}) and inline functions yield
+     * nothing.
+     *
+     * @param metadata the function's metadata
+     * @return the function name
+     */
+    public static Optional<String> approvalFunctionName(Optional<MetadataNode> metadata) {
+        return requiresApprovalField(metadata)
+                .flatMap(SpecificFieldNode::valueExpr)
+                .filter(value -> value.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE)
+                .map(value -> ((SimpleNameReferenceNode) value).name().text().trim());
+    }
+
+    /**
+     * Returns the approval function named by annotation source text, such as the annotations property of a
+     * function form. The text is parsed, then read as {@link #approvalFunctionName(Optional)} does.
      *
      * @param annotations the annotation source attached to the tool
      * @return the function name
      */
     public static Optional<String> approvalFunctionName(String annotations) {
-        if (annotations == null || !annotations.contains("AgentTool")) {
+        if (annotations == null || annotations.isBlank()) {
             return Optional.empty();
         }
-        Matcher matcher = REQUIRES_APPROVAL.matcher(annotations);
-        if (!matcher.find()) {
-            return Optional.empty();
-        }
-        String name = matcher.group(1);
-        if (name.equals("true") || name.equals("false")) {
-            return Optional.empty();
-        }
-        return Optional.of(name);
+        ModuleMemberDeclarationNode member =
+                NodeParser.parseModuleMemberDeclaration(annotations + System.lineSeparator() + PARSE_ANCHOR);
+        return member instanceof FunctionDefinitionNode function
+                ? approvalFunctionName(function.metadata())
+                : Optional.empty();
+    }
+
+    // The field's own name token, without the comments and whitespace that lead it.
+    private static String fieldName(SpecificFieldNode field) {
+        Node name = field.fieldName();
+        return name instanceof Token token ? token.text().trim() : name.toSourceCode().trim();
+    }
+
+    private static boolean isFalseLiteral(SpecificFieldNode field) {
+        return field.valueExpr()
+                .filter(value -> value.kind() == SyntaxKind.BOOLEAN_LITERAL)
+                .map(value -> ((BasicLiteralNode) value).literalToken().text().trim().equals("false"))
+                .orElse(false);
     }
 
     /**
@@ -161,11 +246,7 @@ public final class ApprovalFunctionSync {
     }
 
     private static void addIfGated(List<String> tools, FunctionDefinitionNode function, String functionName) {
-        Optional<MetadataNode> metadata = function.metadata();
-        if (metadata.isEmpty()) {
-            return;
-        }
-        Optional<String> approvalFunction = approvalFunctionName(metadata.get().toSourceCode());
+        Optional<String> approvalFunction = approvalFunctionName(function.metadata());
         if (approvalFunction.isPresent() && stripQuote(approvalFunction.get()).equals(stripQuote(functionName))) {
             tools.add(function.functionName().text().trim());
         }
@@ -276,7 +357,9 @@ public final class ApprovalFunctionSync {
     }
 
     /**
-     * Reads a function's parameters from its definition.
+     * Reads a function's parameters from its definition. A defaultable parameter contributes its type and name; the
+     * approval function takes it without the default. Rest parameters aren't read: the {@code ai} module doesn't
+     * allow them on agent tools.
      *
      * @param function the function
      * @return its parameters in order; parameters without a name are skipped
@@ -284,13 +367,20 @@ public final class ApprovalFunctionSync {
     public static List<Param> params(FunctionDefinitionNode function) {
         List<Param> params = new ArrayList<>();
         for (ParameterNode parameter : function.functionSignature().parameters()) {
+            Node type;
+            Optional<Token> name;
             if (parameter.kind() == SyntaxKind.REQUIRED_PARAM) {
                 RequiredParameterNode required = (RequiredParameterNode) parameter;
-                Optional<Token> name = required.paramName();
-                if (name.isPresent()) {
-                    params.add(new Param(required.typeName().toSourceCode().trim(), name.get().text().trim()));
-                }
+                type = required.typeName();
+                name = required.paramName();
+            } else if (parameter.kind() == SyntaxKind.DEFAULTABLE_PARAM) {
+                DefaultableParameterNode defaultable = (DefaultableParameterNode) parameter;
+                type = defaultable.typeName();
+                name = defaultable.paramName();
+            } else {
+                continue;
             }
+            name.ifPresent(token -> params.add(new Param(type.toSourceCode().trim(), token.text().trim())));
         }
         return params;
     }

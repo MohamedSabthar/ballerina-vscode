@@ -61,11 +61,10 @@ public class UpdateApprovalFunctionCodeAction implements DiagnosticBasedCodeActi
     public List<CodeAction> getCodeActions(Diagnostic diagnostic, DiagBasedPositionDetails positionDetails,
                                            CodeActionContext context) {
         Optional<FunctionDefinitionNode> tool = enclosingFunction(positionDetails.matchedNode());
-        if (tool.isEmpty() || tool.get().metadata().isEmpty()) {
+        if (tool.isEmpty()) {
             return List.of();
         }
-        Optional<String> approvalFunction =
-                ApprovalFunctionSync.approvalFunctionName(tool.get().metadata().get().toSourceCode());
+        Optional<String> approvalFunction = ApprovalFunctionSync.approvalFunctionName(tool.get().metadata());
         if (approvalFunction.isEmpty()) {
             return List.of();
         }

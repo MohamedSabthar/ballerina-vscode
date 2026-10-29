@@ -5,7 +5,7 @@
   await frame.locator('[data-testid="approval-required"] vscode-checkbox').first().click();
   await frame.locator('[data-testid="approval-function-attached"]').waitFor({ state: 'hidden', timeout: 15000 });
   await frame.getByRole('button', { name: 'Save', exact: true }).last().click();
-  await waitForSources((src) => !src.includes('requiresApproval') && !src.includes('function sendEmailNotify')
-    && src.includes('function sendMail('), 'requiresApproval removed and sendEmailNotify deleted');
-  console.log('approval off: field removed, sendEmailNotify deleted');
+  await waitForSources((src) => !src.includes('requiresApproval') && !src.includes('function sendEmailApproval')
+    && src.includes('function sendMail('), 'requiresApproval removed and sendEmailApproval deleted');
+  console.log('approval off: field removed, sendEmailApproval deleted');
 }

@@ -183,7 +183,6 @@ export function UseAgentToolForm(props: UseAgentToolFormProps): JSX.Element {
                     agentPosition = await resolveAgentNodePosition(updatedAgentNode, rpcClient);
                 }
             }
-            await approvalActions.verifyGenerated(approvalData);
             onToolSaved?.(toolName);
             onSave?.(agentPosition);
         } catch (error) {

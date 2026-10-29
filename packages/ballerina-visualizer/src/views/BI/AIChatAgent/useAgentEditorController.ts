@@ -284,6 +284,17 @@ export function useAgentEditorController(host: AgentEditorHost): AgentEditorCont
             const approvalFunction = await approvalActions.approvalFunctionOfTool(
                 tool.name, node.codedata?.lineRange?.fileName || "agents.bal", host.projectPath
             );
+            // Deleting the tool also deletes its approval function, and any logic written in it, so ask first.
+            if (approvalFunction) {
+                const answer = await rpcClient.getCommonRpcClient().showInformationModal({
+                    message: `Delete ${tool.name}?`,
+                    detail: `Its approval function ${approvalFunction} is deleted too, unless another tool uses it.`,
+                    items: ["Delete"],
+                });
+                if (answer !== "Delete") {
+                    return;
+                }
+            }
             const updated = await removeToolFromAgentNode(node, tool.name);
             if (updated) {
                 await refreshAgentNodeLineRange(updated, rpcClient);
